@@ -1,0 +1,12 @@
+(
+echo node_modules/
+echo __pycache__/
+echo *.pyc
+echo .venv/
+echo .vscode/
+echo *.glb
+echo *.png
+echo *.jpg
+echo AR-TryOn-App/ml-service-2dto3d/checkpoints/
+echo AR-TryOn-App/ml-service-2dto3d/InstantMesh/
+) > .gitignore

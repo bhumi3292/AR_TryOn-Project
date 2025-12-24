@@ -1,0 +1,82 @@
+﻿============================================================
+TESTING PHASE 1 AND PHASE 2
+============================================================
+--- Starting 3D Generation for: test_product_123 ---
+--- Phase 1: Generating 6 Views ---
+
+============================================================
+python : Traceback (most recent call last):
+At line:1 char:1
++ python test_phases.py 2>&1 | Out-File 
+-FilePath test_output.log -Enco ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (T 
+   raceback (most recent call last)::String)   
+  [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandErr 
+   or
+ 
+  File "E:\AR_Project\AR-TryOn-App\ml-service-2
+dto3d\pipeline\mesh_generator.py", line 53, in 
+generate_mesh
+    pipeline = 
+DiffusionPipeline.from_pretrained(
+  File "C:\Users\bhumi\anaconda3\envs\ar-ml\lib
+\site-packages\huggingface_hub\utils\_validator
+s.py", line 114, in _inner_fn
+    return fn(*args, **kwargs)
+  File "C:\Users\bhumi\anaconda3\envs\ar-ml\lib
+\site-packages\diffusers\pipelines\pipeline_uti
+ls.py", line 894, in from_pretrained
+    pipeline_class = _get_pipeline_class(
+  File "C:\Users\bhumi\anaconda3\envs\ar-ml\lib
+\site-packages\diffusers\pipelines\pipeline_loa
+ding_utils.py", line 507, in 
+_get_pipeline_class
+    pipeline_cls = getattr(diffusers_module, 
+class_name)
+  File "C:\Users\bhumi\anaconda3\envs\ar-ml\lib
+\site-packages\diffusers\utils\import_utils.py"
+, line 1009, in __getattr__
+    raise AttributeError(f"module 
+{self.__name__} has no attribute {name}")
+AttributeError: module diffusers has no 
+attribute Zero123PlusPipeline. Did you mean: 
+'CogView3PlusPipeline'?
+
+During handling of the above exception, 
+another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\AR_Project\AR-TryOn-App\ml-service-2
+dto3d\test_phases.py", line 32, in <module>
+    result_path = 
+generate_mesh(test_image_path, output_dir, 
+product_id)
+  File "E:\AR_Project\AR-TryOn-App\ml-service-2
+dto3d\pipeline\mesh_generator.py", line 69, in 
+generate_mesh
+    print(f"\u26a0\ufe0f Phase 1 AI Error: 
+{e}")
+  File "C:\Users\bhumi\anaconda3\envs\ar-ml\lib
+\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.err
+ors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't 
+encode characters in position 0-1: character 
+maps to <undefined>
+
+During handling of the above exception, 
+another exception occurred:
+
+Traceback (most recent call last):
+  File "E:\AR_Project\AR-TryOn-App\ml-service-2
+dto3d\test_phases.py", line 38, in <module>
+    print(f"\u274c ERROR: {e}")
+  File "C:\Users\bhumi\anaconda3\envs\ar-ml\lib
+\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.err
+ors,encoding_table)[0]
+UnicodeEncodeError: 'charmap' codec can't 
+encode character '\u274c' in position 0: 
+character maps to <undefined>

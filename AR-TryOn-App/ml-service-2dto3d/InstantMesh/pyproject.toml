@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "instantmesh"
+version = "0.0.1"
+description = "Instant Mesh utilities used by the ml-service-2dto3d pipeline"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [ { name = "AR Project" } ]
+classifiers = ["Programming Language :: Python :: 3"]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]

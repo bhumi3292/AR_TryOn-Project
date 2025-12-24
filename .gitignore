@@ -1,0 +1,5 @@
+﻿**/models/
+**/checkpoints/
+**/*.glb
+**/*.png
+node_modules/

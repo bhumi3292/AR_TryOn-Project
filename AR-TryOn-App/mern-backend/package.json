@@ -1,0 +1,46 @@
+{
+  "name": "ar_project-backend",
+  "version": "1.0.0",
+  "description": "AR Try-On Backend - MERN Stack API (consolidated)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "jest --runInBand",
+    "dev": "nodemon src/server.js"
+  },
+  "keywords": [
+    "ar",
+    "tryon",
+    "jewelry",
+    "nodejs",
+    "express",
+    "mongodb"
+  ],
+  "author": "AR Try-On Team",
+  "license": "MIT",
+  "dependencies": {
+    "aws-sdk": "^2.1420.0",
+    "axios": "^1.6.0",
+    "bcryptjs": "^2.4.3",
+    "cloudinary": "^2.8.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "express-rate-limit": "^6.8.0",
+    "helmet": "^6.0.0",
+    "joi": "^17.9.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb-memory-server": "^8.13.0",
+    "mongoose": "^7.3.1",
+    "morgan": "^1.10.0",
+    "multer": "^1.4.5-lts.1",
+    "multer-storage-cloudinary": "^2.2.1",
+    "node-fetch": "^2.6.7"
+  },
+  "devDependencies": {
+    "jest": "^29.6.1",
+    "nodemon": "^3.1.11",
+    "supertest": "^6.3.3"
+  }
+}
