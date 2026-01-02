@@ -1,106 +1,74 @@
 import React, { useRef, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
 /**
- * FaceOccluder Component
- * 
- * Creates an invisible mesh that follows the face geometry to provide
- * realistic occlusion. This makes earrings appear to go behind the face
- * when the user turns their head.
- * 
- * The mesh is rendered with colorWrite disabled so it only affects the
- * depth buffer, not the visible pixels.
+ * Optimized FaceOccluder Component
+ * Accesses landmarks via ref to avoid React re-renders.
  */
 
-export default function FaceOccluder({ landmarks }) {
-    const meshRef = useRef();
+export default function FaceOccluder({ landmarksRef }) {
     const geometryRef = useRef();
+    const { viewport } = useThree();
 
-    // Key landmarks for creating a simplified face mesh
-    const faceContourIndices = useMemo(() => {
-        return [
-            // Face oval contour
-            10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
-            397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
-            172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
+    // Key landmarks for a comprehensive face mask (Face Oval + Nose Bridge)
+    const faceContourIndices = useMemo(() => [
+        10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288,
+        397, 365, 379, 378, 400, 377, 152, 148, 176, 149, 150, 136,
+        172, 58, 132, 93, 234, 127, 162, 21, 54, 103, 67, 109,
+        168, 6, 197, 195, 5, 4
+    ], []);
 
-            // Nose bridge and sides
-            168, 6, 197, 195, 5, 4,
+    const indices = useMemo(() => {
+        const idxs = [];
+        const centerIdx = 0; // Use vertex 0 as a fan center if simple
+        // Ideally we triangulate properly, but fan is okay for convex-ish face oval
+        for (let i = 1; i < faceContourIndices.length - 1; i++) {
+            idxs.push(centerIdx, i, i + 1);
+        }
+        return idxs;
+    }, [faceContourIndices]);
 
-            // Forehead area
-            10, 109, 67, 103, 54, 21, 162, 127, 234, 93, 132, 58, 172, 136, 150, 149,
+    const initialPositions = useMemo(() => new Float32Array(faceContourIndices.length * 3), [faceContourIndices]);
 
-            // Cheeks
-            234, 127, 162, 21, 54, 103, 67, 109, 10, 338, 297, 332, 284, 251, 389, 356, 454
-        ];
-    }, []);
+    useFrame(() => {
+        if (!landmarksRef.current || landmarksRef.current.length < 468 || !geometryRef.current) return;
 
-    // Create geometry from landmarks
-    const createFaceGeometry = (landmarks) => {
-        if (!landmarks || landmarks.length < 468) return null;
+        const landmarks = landmarksRef.current;
+        const positions = geometryRef.current.attributes.position.array;
 
-        const vertices = [];
-        const indices = [];
+        const w = viewport.width / 2;
+        const h = viewport.height / 2;
 
-        // Convert landmarks to vertices
-        faceContourIndices.forEach((idx) => {
+        faceContourIndices.forEach((idx, i) => {
             const lm = landmarks[idx];
             if (lm) {
-                // Convert MediaPipe coords to Three.js space
-                vertices.push(
-                    (lm.x - 0.5) * 2,      // X
-                    -(lm.y - 0.5) * 2,     // Y (inverted)
-                    -lm.z * 2 || 0         // Z
-                );
+                // Same projection logic as JewelryAnchor
+                positions[i * 3] = (lm.x - 0.5) * 2 * w;
+                positions[i * 3 + 1] = -(lm.y - 0.5) * 2 * h;
+                positions[i * 3 + 2] = -lm.z * 1.5; // Depth push
             }
         });
 
-        // Create triangles using a simple fan triangulation from center
-        // This is a simplified approach - for better results, use Delaunay triangulation
-        const centerIdx = Math.floor(faceContourIndices.length / 2);
-
-        for (let i = 0; i < faceContourIndices.length - 1; i++) {
-            if (i !== centerIdx) {
-                indices.push(centerIdx, i, i + 1);
-            }
-        }
-
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-        geometry.setIndex(indices);
-        geometry.computeVertexNormals();
-
-        return geometry;
-    };
-
-    // Update geometry every frame
-    useFrame(() => {
-        if (!landmarks || landmarks.length < 468) return;
-
-        const newGeometry = createFaceGeometry(landmarks);
-        if (newGeometry && meshRef.current) {
-            if (geometryRef.current) {
-                geometryRef.current.dispose();
-            }
-            geometryRef.current = newGeometry;
-            meshRef.current.geometry = newGeometry;
-        }
+        geometryRef.current.attributes.position.needsUpdate = true;
+        // geometryRef.current.computeVertexNormals(); // Optional, skipping for perf
     });
 
-    // Material that only writes to depth buffer (invisible but blocks rendering)
-    const occluderMaterial = useMemo(() => {
-        return new THREE.MeshBasicMaterial({
-            colorWrite: false,      // Don't write color
-            depthWrite: true,       // Write to depth buffer
-            depthTest: true,        // Test depth
-            side: THREE.DoubleSide  // Render both sides
-        });
-    }, []);
+    const occluderMaterial = useMemo(() => new THREE.MeshBasicMaterial({
+        colorWrite: false, // Don't draw color
+        depthWrite: true,  // Do write opacity to depth buffer
+        side: THREE.DoubleSide
+    }), []);
 
     return (
-        <mesh ref={meshRef} material={occluderMaterial}>
-            <bufferGeometry />
+        <mesh material={occluderMaterial} renderOrder={0}> {/* Render before content */}
+            <bufferGeometry
+                ref={geometryRef}
+                onUpdate={(self) => {
+                    self.setIndex(indices);
+                    self.setAttribute('position', new THREE.BufferAttribute(initialPositions, 3));
+                }}
+            />
         </mesh>
     );
 }

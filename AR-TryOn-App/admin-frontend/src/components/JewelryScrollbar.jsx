@@ -1,52 +1,97 @@
-import React from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 
-export default function JewelryScrollbar({ items, selected, onSelect }) {
+export default function JewelryScrollbar({ items = [], selected, onSelect }) {
+  const scrollerRef = useRef(null);
+  const isDragging = useRef(false);
+  const dragStart = useRef(0);
+  const scrollStart = useRef(0);
+  const [canDrag, setCanDrag] = useState(false);
+
+  useEffect(() => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    // hide native scrollbar for cleaner look
+    el.style.scrollBehavior = 'smooth';
+    setCanDrag(true);
+  }, []);
+
+  const onPointerDown = (e) => {
+    const el = scrollerRef.current;
+    if (!el) return;
+    isDragging.current = true;
+    dragStart.current = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    scrollStart.current = el.scrollLeft;
+    el.style.cursor = 'grabbing';
+    e.preventDefault();
+  };
+
+  const onPointerMove = (e) => {
+    if (!isDragging.current) return;
+    const el = scrollerRef.current;
+    if (!el) return;
+    const x = e.clientX || (e.touches && e.touches[0].clientX) || 0;
+    const dx = dragStart.current - x;
+    el.scrollLeft = scrollStart.current + dx;
+  };
+
+  const onPointerUp = () => {
+    const el = scrollerRef.current;
+    isDragging.current = false;
+    if (el) el.style.cursor = 'grab';
+  };
+
   return (
-    <div className="w-full max-w-[900px]">
-      <div className="flex gap-5 overflow-x-auto carousel-scroll pb-6 pt-2 px-2">
+    <div className="w-full max-w-full">
+      <div
+        ref={scrollerRef}
+        className="flex gap-4 overflow-x-auto no-scrollbar pb-4 pt-2 px-2 items-center"
+        onMouseDown={onPointerDown}
+        onMouseMove={onPointerMove}
+        onMouseUp={onPointerUp}
+        onMouseLeave={onPointerUp}
+        onTouchStart={onPointerDown}
+        onTouchMove={onPointerMove}
+        onTouchEnd={onPointerUp}
+        style={{ cursor: 'grab' }}
+      >
         {items.map((item) => {
-          const id = item._id;
-          const isActive = selected?._id === id;
+          const id = item._id || item.id || item.productId || item.id;
+          const isActive = selected?._id === id || selected?.id === id;
+
+          const thumb = item.thumbnail || item.image2D || item.image || '/public/images/placeholder.png';
 
           return (
             <button
               key={id}
-              onClick={() => onSelect(item)}
-              className={`relative flex-none w-36 group transition-all duration-500 ${isActive ? "scale-105 -translate-y-2" : "hover:scale-105 hover:-translate-y-1"
-                }`}
+              onClick={() => onSelect && onSelect(item)}
+              className={`relative flex-none w-20 group transition-all duration-300 flex flex-col items-center gap-2 ${isActive ? 'scale-110' : 'hover:scale-105'}`}
             >
               <div
-                className={`w-full aspect-[3/4] rounded-xl overflow-hidden relative border transition-all duration-500
-                ${isActive
-                    ? "border-[2px] border-[var(--gold-primary)] shadow-[0_0_25px_rgba(212,175,55,0.4)]"
-                    : "border-[var(--gold-dim)] bg-[var(--bg-card)] brightness-75 group-hover:brightness-100 group-hover:border-[var(--gold-soft)]"
+                className={`w-20 h-20 rounded-full overflow-hidden relative border-2 transition-all duration-300 shadow-lg
+                  ${isActive
+                    ? 'border-[var(--gold)] shadow-[0_0_20px_rgba(212,175,55,0.5)] ring-2 ring-[var(--gold-soft)] ring-offset-2 ring-offset-black'
+                    : 'border-[var(--gold-dim)] bg-zinc-900 group-hover:border-[var(--gold-soft)]'
                   }`}
               >
                 <img
-                  src={item.thumbnail || item.image2D}
-                  alt={item.name}
-                  className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                  src={thumb}
+                  alt={item.name || 'jewelry'}
+                  onError={(e) => { e.target.src = '/images/placeholder.png'; }}
+                  className="w-full h-full object-cover"
                 />
-
-                {/* Overlay Gradient */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-60 group-hover:opacity-40 transition-opacity"></div>
-
-                {/* Price Tag */}
-                <div className="absolute bottom-2 left-0 right-0 text-center">
-                  <p className={`text-xs font-serif tracking-widest transition-colors ${isActive ? 'text-[var(--gold-primary)]' : 'text-white/80'}`}>
-                    {item.name?.split(' ')[0]} {/* Show partial name */}
-                  </p>
-                </div>
               </div>
 
-              {/* Active Indicator Dot */}
+              <p className={`text-[10px] font-serif tracking-widest uppercase max-w-[80px] truncate text-center transition-colors ${isActive ? 'text-[var(--gold)] font-bold' : 'text-zinc-500 group-hover:text-zinc-300'}`}>
+                {item.name || ''}
+              </p>
+
               {isActive && (
-                <div className="absolute -bottom-4 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--gold-primary)] shadow-[0_0_10px_var(--gold-primary)]"></div>
+                <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-[var(--gold)] shadow-[0_0_8px_var(--gold)]" />
               )}
             </button>
           );
         })}
       </div>
-    </div>
+    </div >
   );
 }

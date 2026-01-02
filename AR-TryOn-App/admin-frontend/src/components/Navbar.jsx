@@ -33,7 +33,7 @@ export default function Navbar() {
 
   const navLinks = [
     { name: "Home", path: "/" },
-    { name: "Try-On", path: "/tryon" },
+    { name: "Try-On", path: "/jewellery" },
     { name: "Shop", path: "/jewellery" },
     { name: "About", path: "/about" },
     { name: "Contact", path: "/contact" },
@@ -84,17 +84,20 @@ export default function Navbar() {
           </div>
 
           {/* CART */}
-          <button className="relative text-[var(--gold-primary)] hover:text-[var(--gold-light)] transition-colors">
+          <Link to="/cart" className="relative text-[var(--gold-primary)] hover:text-[var(--gold-light)] transition-colors">
             <FaShoppingBag size={20} />
             <span className="absolute -top-1 -right-1 w-4 h-4 bg-[var(--gold-soft)] text-black text-[10px] font-bold rounded-full flex items-center justify-center">2</span>
-          </button>
+          </Link>
 
           {/* PROFILE */}
           {loggedIn ? (
             <div className="flex items-center gap-4">
-              <Link to="/jewelry/add" className="hidden md:flex items-center gap-2 text-xs font-bold tracking-widest text-[var(--gold-primary)] border border-[var(--gold-primary)] px-4 py-2 rounded-full hover:bg-[var(--gold-primary)] hover:text-black transition-all shadow-[0_0_10px_rgba(212,175,55,0.2)]">
-                ADD PRODUCT
-              </Link>
+              {/* Only show ADD PRODUCT if user is a SELLER */}
+              {(authService.getUser()?.role === 'SELLER' || authService.getUser()?.role?.toLowerCase() === 'admin') && (
+                <Link to="/jewelry/add" className="hidden md:flex items-center gap-2 text-xs font-bold tracking-widest text-[var(--gold-primary)] border border-[var(--gold-primary)] px-4 py-2 rounded-full hover:bg-[var(--gold-primary)] hover:text-black transition-all shadow-[0_0_10px_rgba(212,175,55,0.2)]">
+                  ADD PRODUCT
+                </Link>
+              )}
 
               <div className="relative group">
                 <button className="text-[var(--gold-primary)] hover:text-[var(--gold-light)]">
@@ -102,8 +105,12 @@ export default function Navbar() {
                 </button>
                 {/* Dropdown */}
                 <div className="absolute right-0 top-full mt-4 w-48 bg-[var(--bg-card)] border border-[var(--gold-dim)] rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-300 backdrop-blur-xl">
-                  <Link to="/jewelry/add" className="md:hidden block px-4 py-3 text-sm text-[var(--gold-soft)] hover:bg-[var(--gold-dim)] hover:text-[var(--gold-primary)]">Add Product</Link>
+                  {/* Mobile only ADD PRODUCT link for SELLERS */}
+                  {(authService.getUser()?.role === 'SELLER' || authService.getUser()?.role?.toLowerCase() === 'admin') && (
+                    <Link to="/jewelry/add" className="md:hidden block px-4 py-3 text-sm text-[var(--gold-soft)] hover:bg-[var(--gold-dim)] hover:text-[var(--gold-primary)]">Add Product</Link>
+                  )}
                   <Link to="/profile" className="block px-4 py-3 text-sm text-[var(--gold-soft)] hover:bg-[var(--gold-dim)] hover:text-[var(--gold-primary)]">Profile</Link>
+                  <Link to="/settings/payment" className="block px-4 py-3 text-sm text-[var(--gold-soft)] hover:bg-[var(--gold-dim)] hover:text-[var(--gold-primary)]">Payment Settings</Link>
                   <button onClick={handleLogout} className="block w-full text-left px-4 py-3 text-sm text-red-400 hover:bg-red-900/10">Logout</button>
                 </div>
               </div>

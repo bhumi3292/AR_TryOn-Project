@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import Navbar from "../components/Navbar";
-import { jewelleryService } from "../services";
+import { productService, cartService, authService } from "../services"; // Use productService
 import { useNavigate } from "react-router-dom";
-import { FaSearch, FaFilter, FaCamera } from "react-icons/fa";
+import { FaSearch, FaFilter, FaCamera, FaShoppingCart } from "react-icons/fa";
+import { toast } from "react-toastify";
 
 export default function JewelleryList() {
   const navigate = useNavigate();
@@ -16,19 +17,35 @@ export default function JewelleryList() {
     let mounted = true;
     const load = async () => {
       try {
-        const data = await jewelleryService.getAllJewellery();
+        const data = await productService.getProducts(); // Use getProducts
         if (mounted) {
-          setItems(data?.data || data || []);
+          setItems(data || []);
           setLoading(false);
         }
       } catch (e) {
-        console.error("Failed to load jewelry", e);
+        console.error("Failed to load products", e);
         setLoading(false);
       }
     };
     load();
     return () => (mounted = false);
   }, []);
+
+  const handleAddToCart = async (e, item) => {
+    e.stopPropagation(); // Prevent navigating to TryOn if clicking cart
+    if (!authService.isAuthenticated()) {
+      toast.info("Please login to buy items");
+      navigate("/login");
+      return;
+    }
+    // UI Placeholder if desired, or real cart call
+    try {
+      await cartService.addToCart(item._id || item.id);
+      toast.success("Added to cart");
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to add to cart");
+    }
+  };
 
   // Filter Items
   const filteredItems = items.filter((item) => {
@@ -113,21 +130,28 @@ export default function JewelleryList() {
                 className="group relative bg-zinc-900/40 rounded-xl overflow-hidden border border-gold-500/10 hover:border-gold-500/40 transition-all duration-500 hover:shadow-[0_0_30px_rgba(234,179,8,0.1)] flex flex-col h-[400px]"
               >
                 {/* Image */}
-                <div className="h-64 overflow-hidden relative">
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 z-10"></div>
+                <div className="h-64 overflow-hidden relative cursor-pointer" onClick={() => navigate(`/jewelry/${item._id || item.id}`)}>
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-60 z-10 transition-opacity group-hover:opacity-40"></div>
                   <img
                     src={item.image2D}
                     alt={item.name}
                     className="w-full h-full object-cover transform group-hover:scale-110 transition-transform duration-700 ease-out"
                   />
 
-                  {/* Hover Action - Desktop */}
-                  <div className="absolute inset-0 z-20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/40 backdrop-blur-sm">
+                  {/* Desktop Hover Actions */}
+                  <div className="absolute inset-0 z-20 hidden md:flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 bg-black/40 backdrop-blur-sm gap-3">
                     <button
-                      onClick={() => navigate("/tryon", { state: { item } })}
-                      className="flex items-center gap-3 px-6 py-3 border border-gold-500 bg-gold-500/10 text-gold-500 rounded-full font-medium hover:bg-gold-500 hover:text-black transition-all duration-300 transform translate-y-4 group-hover:translate-y-0"
+                      onClick={(e) => handleAddToCart(e, item)}
+                      className="p-3 bg-white text-black rounded-full hover:bg-gold-500 hover:scale-110 transition-all shadow-lg"
+                      title="Add to Cart"
                     >
-                      Coming Soon
+                      <FaShoppingCart />
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); navigate(`/jewelry/${item._id || item.id}`); }}
+                      className="px-5 py-2 border border-gold-500 bg-gold-500/20 text-gold-500 rounded-full font-medium hover:bg-gold-500 hover:text-black transition-all"
+                    >
+                      View Details
                     </button>
                   </div>
                 </div>
@@ -142,17 +166,32 @@ export default function JewelleryList() {
                       {item.name}
                     </h3>
                     <div className="text-gold-300 font-light text-lg">
-                      {item.price ? `$${item.price}` : "Price On Request"}
+                      Rs. {item.price || "N/A"}
                     </div>
                   </div>
 
-                  {/* Mobile/Always Visible TryOn Button (Transparent Design) */}
+                  {/* Mobile Actions */}
+                  <div className="flex gap-2 mt-4 md:hidden">
+                    <button
+                      onClick={(e) => handleAddToCart(e, item)}
+                      className="flex-1 py-2 bg-white/10 border border-white/20 rounded text-sm text-white hover:bg-gold-500 hover:text-black transition-colors"
+                    >
+                      Add to Cart
+                    </button>
+                    <button
+                      onClick={() => navigate(`/jewelry/${item._id || item.id}`)}
+                      className="flex-1 flex items-center justify-center gap-2 py-2 rounded border border-gold-500/50 bg-gold-500/10 text-gold-500 text-sm"
+                    >
+                      <FaCamera /> View Details
+                    </button>
+                  </div>
+                  {/* Desktop persistent Try Button (optional fallback) */}
                   <button
-                    onClick={() => navigate("/tryon", { state: { item } })}
-                    className="mt-4 w-full flex items-center justify-center gap-2 py-3 rounded-lg border border-white/20 bg-white/5 backdrop-blur-md text-white hover:bg-gold-500 hover:border-gold-500 hover:text-black transition-all duration-300 group-hover:shadow-[0_0_15px_rgba(255,255,255,0.1)]"
+                    onClick={() => navigate(`/jewelry/${item._id || item.id}`)}
+                    className="hidden md:flex mt-4 w-full items-center justify-center gap-2 py-3 rounded-lg border border-white/20 bg-white/5 backdrop-blur-md text-white hover:bg-gold-500 hover:border-gold-500 hover:text-black transition-all duration-300 group-hover:hidden"
                   >
                     <FaCamera className="text-lg" />
-                    <span className="tracking-wide font-medium">TRY ON NOW</span>
+                    <span className="tracking-wide font-medium">VIEW DETAILS</span>
                   </button>
                 </div>
               </div>

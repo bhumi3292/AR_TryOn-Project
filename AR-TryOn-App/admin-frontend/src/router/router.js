@@ -9,13 +9,36 @@ import {
   ForgotPassword,
   ResetPassword,
   TryOn,
+  Cart,
+  Checkout,
+  PaymentSettings,
+  // Add these to imports
+  About,
+  JewelryDetails,
+  LocationSettings,
+  Contact,
+  Profile,
+  Chat,
+  PaymentCallback,
 } from "../pages";
 import { authService } from "../services";
+
+// ... existing imports ...
 
 export const routes = [
   {
     path: "/",
     component: Landing,
+    protected: false,
+  },
+  {
+    path: "/jewellery",
+    component: JewelleryList,
+    protected: false,
+  },
+  {
+    path: "/jewelry",
+    component: JewelleryList,
     protected: false,
   },
   {
@@ -29,8 +52,18 @@ export const routes = [
     protected: false,
   },
   {
+    path: "/register",
+    component: Signup,
+    protected: false,
+  },
+  {
     path: "/forgot-password",
     component: ForgotPassword,
+    protected: false,
+  },
+  {
+    path: "/reset-password",
+    component: ResetPassword,
     protected: false,
   },
   {
@@ -39,9 +72,49 @@ export const routes = [
     protected: false,
   },
   {
-    path: "/tryon",
+    path: "/try-on/:productId",
     component: TryOn,
     protected: false,
+  },
+  {
+    path: "/about",
+    component: About,
+    protected: false,
+  },
+  {
+    path: "/contact",
+    component: Contact,
+    protected: false,
+  },
+  {
+    path: "/payment/esewa/success",
+    component: PaymentCallback,
+    protected: false,
+  },
+  {
+    path: "/payment/failed",
+    component: PaymentCallback,
+    protected: false,
+  },
+  {
+    path: "/chat", // Added chat route
+    component: Chat,
+    protected: true,
+  },
+  {
+    path: "/profile",
+    component: Profile,
+    protected: true,
+  },
+  {
+    path: "/settings/payment",
+    component: PaymentSettings,
+    protected: true,
+  },
+  {
+    path: "/settings/location",
+    component: LocationSettings,
+    protected: true,
   },
   {
     path: "/dashboard",
@@ -49,8 +122,13 @@ export const routes = [
     protected: true,
   },
   {
-    path: "/jewelry",
-    component: JewelleryList,
+    path: "/seller/dashboard",
+    component: Dashboard,
+    protected: true,
+  },
+  {
+    path: "/seller/add-product",
+    component: AddJewellery,
     protected: true,
   },
   {
@@ -61,6 +139,21 @@ export const routes = [
   {
     path: "/jewelry/edit/:id",
     component: EditJewellery,
+    protected: true,
+  },
+  {
+    path: "/jewelry/:id",
+    component: JewelryDetails,
+    protected: false,
+  },
+  {
+    path: "/cart",
+    component: Cart,
+    protected: true,
+  },
+  {
+    path: "/checkout",
+    component: Checkout,
     protected: true,
   },
 ];
@@ -115,6 +208,7 @@ export const navigateTo = (page, params = {}) => {
     "jewelry-list": "/jewelry",
     "jewelry-add": "/jewelry/add",
     "jewelry-edit": `/jewelry/edit/${params.id || ""}`,
+    "jewelry-details": `/jewelry/${params.id || ""}`,
   };
 
   const path = pathMap[page] || "/dashboard";

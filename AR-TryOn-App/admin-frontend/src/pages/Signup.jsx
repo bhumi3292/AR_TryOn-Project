@@ -14,6 +14,7 @@ export default function Signup({ onSignup }) {
     address: "",
     city: "",
     country: "",
+    role: 'BUYER',
   });
 
   const [loading, setLoading] = useState(false);
@@ -37,11 +38,7 @@ export default function Signup({ onSignup }) {
 
     try {
       setLoading(true);
-      await authService.register(
-        formData.fullName,
-        formData.email,
-        formData.password,
-      );
+      await authService.register(formData.fullName || formData.name, formData.email, formData.password, formData.role);
       toast.success("Account created successfully! Welcome.");
 
       if (typeof onSignup === "function") {
@@ -270,6 +267,22 @@ export default function Signup({ onSignup }) {
                     {showConfirmPassword ? <FaEyeSlash size={18} /> : <FaEye size={18} />}
                   </button>
                 </div>
+              </div>
+              {/* Role Selector */}
+              <div className="space-y-2 md:col-span-2">
+                <label htmlFor="role" className="text-white/90 block">
+                  Account Type *
+                </label>
+                <select
+                  id="role"
+                  name="role"
+                  value={formData.role}
+                  onChange={handleChange}
+                  className="mt-2 w-full bg-white/5 border border-gold-500/20 text-white p-3 rounded-md focus:border-gold outline-none"
+                >
+                  <option value="BUYER">Buyer</option>
+                  <option value="SELLER">Seller</option>
+                </select>
               </div>
             </div>
 

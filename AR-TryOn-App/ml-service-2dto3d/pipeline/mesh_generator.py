@@ -1,119 +1,221 @@
 import os
-import sys
-import torch
-import gc
+import logging
 import numpy as np
-from PIL import Image
-import trimesh
-from diffusers import DiffusionPipeline, EulerAncestralDiscreteScheduler
-from omegaconf import OmegaConf
-from safetensors.torch import load_file
-from einops import rearrange
+import open3d as o3d
+import cv2
+from .depth_estimator import estimate_depth
+from .validator import SegmentationValidator
 
-# 1. Windows CUDA Setup
-if sys.platform == 'win32':
-    os.environ["FORCE_CUDA"] = "1"
-    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
-    torch_bin = os.path.join(os.path.dirname(torch.__file__), 'bin')
-    if os.path.exists(torch_bin):
-        os.add_dll_directory(torch_bin)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("MeshGenerator")
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if BASE_DIR not in sys.path:
-    sys.path.insert(0, BASE_DIR)
+class MeshGenerator:
+    """
+    Production-grade Geometric Lifting Kernel.
+    Strictly enforces pipeline:
+    1. Validate Input (SAM)
+    2. Depth Estimation
+    3. Point Cloud
+    4. Poisson Reconstruction
+    5. Hole Carving (Alpha Masking)
+    6. Cleanup & PBR
+    """
 
-from src.utils.train_util import instantiate_from_config
-from src.utils.camera_util import get_zero123plus_input_cameras
+    def __init__(self, model_dir: str | None = None):
+        self.validator = SegmentationValidator()
+        logger.info("MeshGenerator initialized.")
 
-def generate_mesh(image_path: str, output_dir: str, product_id: str, category: str = "necklace") -> str:
-    print(f"--- Starting 3D Generation for {category.upper()} ---")
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    RECON_SAFE_PATH = os.path.join(BASE_DIR, "checkpoints", "instant-mesh", "instant_mesh_base.safetensors")
-    LOCAL_MODEL_DIR = os.path.join(BASE_DIR, "models", "zero123plus")
-
-    # --- Phase 1: 6-View Generation ---
-    try:
-        pipeline = DiffusionPipeline.from_pretrained(
-            LOCAL_MODEL_DIR, 
-            torch_dtype=torch.float16, 
-            local_files_only=True, 
-            trust_remote_code=True, 
-            custom_pipeline=os.path.join(LOCAL_MODEL_DIR, "pipeline.py")
-        ).to(device)
-        pipeline.scheduler = EulerAncestralDiscreteScheduler.from_config(pipeline.scheduler.config, timestep_spacing='trailing')
+    def _carve_holes_using_mask(self, mesh, mask_path):
+        """
+        Removes vertices that project to transparent areas in the original mask.
+        Crucial for preserving ring holes in Poisson reconstruction.
+        """
+        logger.info("Carving holes using alpha mask...")
         
-        raw_img = Image.open(image_path).convert('RGB')
-        mv_result = pipeline(raw_img, num_inference_steps=30).images[0]
-        
-        del pipeline
-        gc.collect()
-        torch.cuda.empty_cache()
-        print("✅ Phase 1 Successful.")
-    except Exception as e: 
-        print(f"⚠️ Phase 1 Error: {e}")
-        return ""
-
-    # --- Phase 2: Building 3D Mesh ---
-    print("--- Phase 2: Building 3D Mesh ---")
-    out_path = os.path.join(output_dir, f"{product_id}.glb")
-    try:
-        cfg = OmegaConf.load(os.path.join(BASE_DIR, "InstantMesh", "configs", "instant-mesh-base.yaml"))
-        model = instantiate_from_config(cfg.model_config).to(device)
-        model.init_flexicubes_geometry(device)
-        model.load_state_dict({k.replace('model.', ''): v for k, v in load_file(RECON_SAFE_PATH, device=str(device)).items()}, strict=False)
-        model.eval()
-
-        with torch.no_grad():
-            images = torch.from_numpy(np.array(mv_result.resize((640, 960))).astype(np.float32) / 255.0).permute(2, 0, 1).unsqueeze(0).to(device)
-            images = rearrange(images, 'b c (n h) (m w) -> b (n m) c h w', n=3, m=2)
-            cameras = get_zero123plus_input_cameras(batch_size=1).to(device)
-            planes = model.forward_planes(images, cameras)
+        # Load mask
+        mask = cv2.imread(mask_path, cv2.IMREAD_UNCHANGED)
+        if mask.shape[2] == 4:
+            alpha = mask[:, :, 3]
+        else:
+            return mesh # No alpha, skip
             
-            # Category-based Resolution
-            extract_res = 192 if category == "nosepin" else 128
-            print(f"Extracting mesh at resolution: {extract_res}")
-            vertices, faces, vertex_colors = model.extract_mesh(planes, use_texture_map=False, resolution=extract_res)
-
-        # --- Phase 3: Cleanup Logic (FIXED FOR NUMPY ERROR) ---
-        print(f"🧼 [Cleanup] Processing {category} mesh...")
+        h, w = alpha.shape
         
-        # Safety check: convert to numpy ONLY if they are still torch tensors
-        v = vertices.cpu().numpy() if hasattr(vertices, 'cpu') else vertices
-        f = faces.cpu().numpy() if hasattr(faces, 'cpu') else faces
-        c = vertex_colors.cpu().numpy() if hasattr(vertex_colors, 'cpu') else vertex_colors
-
-        mesh = trimesh.Trimesh(vertices=v, faces=f, vertex_colors=c, process=False)
-
-        # 1. Remove floating noise (Spikes)
-        components = mesh.split(only_watertight=False)
-        if len(components) > 1:
-            print(f"   - Removing {len(components)-1} disconnected noise fragments...")
-            mesh = max(components, key=lambda x: len(x.vertices))
-
-        # 2. Category-based Smoothing & Scaling
-        if category == "nosepin":
-            trimesh.smoothing.filter_humphrey(mesh, iterations=1) 
-            mesh.apply_scale(1.5) 
-        elif category == "earring":
-            trimesh.smoothing.filter_humphrey(mesh, iterations=2)
-            mesh.apply_scale(1.2)
-        else: # Necklace
-            trimesh.smoothing.filter_humphrey(mesh, iterations=4) 
-
-        # 4. Final Export
-        mesh.export(out_path)
+        # Get vertices
+        vertices = np.asarray(mesh.vertices)
         
-        # Final memory cleanup
-        del model, planes, images, cameras, mesh
-        gc.collect()
-        torch.cuda.empty_cache()
+        # Assume mesh is centered/scaled? No, we haven't scaled yet.
+        # We need to know the projection.
+        # Our Point Cloud generation was Pinhole.
+        # Vertices x,y should align with image u,v if we didn't move them.
+        # But Poisson changes topology.
+        # However, the general X,Y coordinates roughly correspond to the camera plane.
         
-        print(f"✅ SUCCESS: {out_path}")
-        return out_path
+        # Pinhole inverse: u = fx * x / z + cx
+        # We used: intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, fx=width, fy=width, cx=width/2, cy=height/2)
+        # So: u = width * X / Z + width/2
+        
+        # But wait, Poisson reconstruction might have smoothed/shifted things.
+        # Strategy: We assume the "front" of the object is aligned.
+        
+        # Vectorized projection
+        X = vertices[:, 0]
+        Y = vertices[:, 1]
+        Z = vertices[:, 2]
+        
+        cx = w / 2
+        cy = h / 2
+        fx = w
+        
+        # Avoid div by zero
+        Z_safe = Z.copy()
+        Z_safe[np.abs(Z_safe) < 1e-4] = 1e-4
+        
+        U = (fx * X / Z_safe) + cx
+        V = (fx * Y / Z_safe) + cy
+        
+        # Create invalid mask
+        to_remove = []
+        
+        for i in range(len(vertices)):
+            u, v = int(U[i]), int(V[i])
+            if 0 <= u < w and 0 <= v < h:
+                if alpha[v, u] < 128: # Transparent
+                    to_remove.append(i)
+            else:
+                to_remove.append(i) # Out of bounds
+                
+        # Remove
+        if len(to_remove) > 0:
+            mesh.remove_vertices_by_mask(np.isin(np.arange(len(vertices)), to_remove))
+            mesh.remove_degenerate_triangles()
+            
+        return mesh
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        torch.cuda.empty_cache()
-        print(f"⚠️ Phase 2 Error: {e}")
-        return ""
+    def generate_mesh(self, input_image_path: str, output_path: str, category: str = "necklace", resolution: int = 128) -> dict:
+        """
+        Returns metrics dict on success, raises Exception on fail.
+        """
+        logger.info(f"Starting pipeline for: {input_image_path} [Category: {category}]")
+        
+        # 1. Validation (Fail Hard)
+        try:
+            self.validator.validate_mask(input_image_path)
+        except Exception as e:
+            raise ValueError(f"Pipeline Validation Failed: {e}")
+            
+        # 2. Depth Estimation
+        depth_array, rgb_image = estimate_depth(input_image_path)
+        width, height = rgb_image.size
+        
+        # Metrics
+        depth_conf = float(np.std(depth_array))
+        
+        # 3. Geometric Lifting
+        # Normalize Depth (0..1)
+        d_min, d_max = np.min(depth_array), np.max(depth_array)
+        depth_norm = (depth_array - d_min) / (d_max - d_min + 1e-6)
+        
+        # Z-mapping
+        z_depth = 1.6 - (depth_norm * 0.6) 
+        
+        # Create PointCloud
+        o3d_color = o3d.geometry.Image(np.array(rgb_image))
+        o3d_depth = o3d.geometry.Image(z_depth.astype(np.float32))
+        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
+            o3d_color, o3d_depth, depth_scale=1.0, depth_trunc=10.0, convert_rgb_to_intensity=False
+        )
+        intrinsic = o3d.camera.PinholeCameraIntrinsic(width, height, width, width, width/2, height/2)
+        pcd = o3d.geometry.PointCloud.create_from_rgbd_image(rgbd, intrinsic)
+        
+        # SOR Cleanup
+        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        pcd.estimate_normals()
+        pcd.orient_normals_towards_camera_location(camera_location=np.array([0., 0., 0.]))
+        
+        # 4. Reconstruction (Poisson)
+        logger.info("Running Poisson Reconstruction...")
+        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=8, width=0, scale=1.1, linear_fit=False)
+        
+        # Trim low density
+        densities = np.asarray(densities)
+        mask = densities < np.quantile(densities, 0.1)
+        mesh.remove_vertices_by_mask(mask)
+        
+        # 5. Hole Carving
+        mesh = self._carve_holes_using_mask(mesh, input_image_path)
+        
+        # 6. Dimensions & Cleanup
+        mesh.remove_degenerate_triangles()
+        mesh.compute_vertex_normals()
+        
+        # Decimate if heavy
+        if len(mesh.triangles) > 40000:
+             mesh = mesh.simplify_quadric_decimation(40000)
+             
+        # --- NORMALIZATION & SCALING ---
+        # 1. Center at Origin
+        center = mesh.get_center()
+        mesh.translate(-center)
+        
+        # 2. Normalize to Unit Box
+        max_bound = mesh.get_max_bound()
+        min_bound = mesh.get_min_bound()
+        dims = max_bound - min_bound
+        max_dim = np.max(dims)
+        
+        if max_dim == 0: raise ValueError("Mesh has 0 volume")
+        mesh.scale(1.0 / max_dim, center=(0,0,0)) # Now fits in 1x1x1 box
+        
+        # 3. Apply Category-Specific Real-World Scale (Meters)
+        # Necklace: ~12-15cm wide
+        # Earring: ~3-5cm tall
+        if "ear" in category.lower():
+            target_size = 0.04 # 4cm
+        else:
+            target_size = 0.14 # 14cm
+            
+        mesh.scale(target_size, center=(0,0,0))
+        logger.info(f"Scaled mesh to target size: {target_size}m")
+        
+        # 7. Check Validity
+        if len(mesh.vertices) < 100:
+            raise ValueError("Mesh too sparse after cleanup")
+        
+        try:
+            euler = mesh.get_euler_poincare_characteristic()
+            logger.info(f"Euler Characteristic: {euler} (Topology Check)")
+            # Single object ~ 2. Ring (torus) ~ 0.
+        except:
+            pass
+
+        # 8. Export & PBR
+        logger.info(f"Exporting to {output_path}")
+        o3d.io.write_triangle_mesh(output_path, mesh)
+        
+        # Inject PBR
+        self._inject_pbr(output_path)
+        
+        return {
+            "vertices": len(mesh.vertices),
+            "faces": len(mesh.triangles),
+            "depth_confidence": depth_conf
+        }
+
+    def _inject_pbr(self, glb_path):
+        try:
+            from pygltflib import GLTF2, Material, PbrMetallicRoughness
+            gltf = GLTF2().load(glb_path)
+            if not gltf.materials:
+                 gltf.materials.append(Material())
+            for mat in gltf.materials:
+                if mat.pbrMetallicRoughness is None:
+                    mat.pbrMetallicRoughness = PbrMetallicRoughness()
+                mat.pbrMetallicRoughness.metallicFactor = 0.9  # Very Metal
+                mat.pbrMetallicRoughness.roughnessFactor = 0.2 # Shiny
+            gltf.save(glb_path)
+        except Exception as e:
+            logger.warning(f"PBR Injection failed: {e}")
+
+if __name__ == "__main__":
+    pass

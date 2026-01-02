@@ -22,6 +22,9 @@ export default function Profile() {
         country: "",
     });
 
+    const [delivery, setDelivery] = useState({ fullName: '', mobile: '', city: '', street: '' });
+    const [editingDelivery, setEditingDelivery] = useState(false);
+
     useEffect(() => {
         loadProfile();
     }, []);
@@ -39,6 +42,14 @@ export default function Profile() {
                     city: data.user.city || "",
                     country: data.user.country || "",
                 });
+                if (data.user.deliveryAddress) {
+                    setDelivery({
+                        fullName: data.user.deliveryAddress.fullName || '',
+                        mobile: data.user.deliveryAddress.mobile || '',
+                        city: data.user.deliveryAddress.city || '',
+                        street: data.user.deliveryAddress.street || ''
+                    });
+                }
             }
         } catch (error) {
             console.error("Failed to load profile", error);
@@ -92,6 +103,34 @@ export default function Profile() {
         } catch (error) {
             console.error("Update failed", error);
             toast.error(error.message || "Failed to update profile.");
+        }
+    };
+
+    const handleDeliveryChange = (e) => {
+        setDelivery({ ...delivery, [e.target.name]: e.target.value });
+    };
+
+    const saveDelivery = async (e) => {
+        e.preventDefault();
+        try {
+            if (user?.deliveryAddress && user.deliveryAddress.fullName) {
+                const res = await authService.updateAddress(delivery);
+                if (res.success) {
+                    toast.success('Delivery address updated');
+                    setUser(res.user);
+                    setEditingDelivery(false);
+                }
+            } else {
+                const res = await authService.saveAddress(delivery);
+                if (res.success) {
+                    toast.success('Delivery address saved');
+                    setUser(res.user);
+                    setEditingDelivery(false);
+                }
+            }
+        } catch (err) {
+            console.error(err);
+            toast.error(err?.response?.data?.message || 'Failed to save address');
         }
     };
 
@@ -157,6 +196,10 @@ export default function Profile() {
                                 <Edit className="h-5 w-5 mr-3" />
                                 Personal Info
                             </button>
+                            <button onClick={() => window.location.href = '/chat'} className={getSidebarButtonClasses("messages")}>
+                                <Mail className="h-5 w-5 mr-3" />
+                                Messages
+                            </button>
                         </nav>
                     </aside>
 
@@ -165,6 +208,28 @@ export default function Profile() {
                         {activeTab === "overview" && (
                             <div className="space-y-6">
                                 <h1 className="text-3xl font-serif text-[var(--gold)] mb-6">Profile Overview</h1>
+                                {/* Delivery Address Quick View */}
+                                <div className="bg-black/40 p-6 rounded-lg border border-[var(--gold)]/10">
+                                    <h3 className="text-lg font-medium text-white mb-3">Delivery Address</h3>
+                                    {user?.deliveryAddress && user.deliveryAddress.fullName ? (
+                                        <div className="text-sm text-gray-200">
+                                            <p className="font-medium">{user.deliveryAddress.fullName}</p>
+                                            <p>{user.deliveryAddress.street}</p>
+                                            <p>{user.deliveryAddress.city}</p>
+                                            <p>{user.deliveryAddress.mobile}</p>
+                                            <div className="mt-3">
+                                                <button onClick={() => setEditingDelivery(true)} className="px-3 py-2 bg-[var(--gold)] text-black rounded">Edit</button>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <p className="text-sm text-gray-300">No delivery address saved.</p>
+                                            <div className="mt-3">
+                                                <button onClick={() => setEditingDelivery(true)} className="px-3 py-2 bg-[var(--gold)] text-black rounded">Add Address</button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                     <div className="bg-black/40 p-6 rounded-lg border border-[var(--gold)]/10 flex items-center gap-4">
                                         <div className="p-3 bg-[var(--gold)]/10 rounded-full">
@@ -284,6 +349,34 @@ export default function Profile() {
                                         Save Changes
                                     </button>
                                 </form>
+                                {/* Delivery Address Editor */}
+                                {editingDelivery && (
+                                    <div className="mt-8 bg-black/30 p-6 rounded-lg border border-[var(--gold)]/10">
+                                        <h2 className="text-xl text-[var(--gold)] mb-4">Delivery Address</h2>
+                                        <form onSubmit={saveDelivery} className="space-y-4">
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">Full Name</label>
+                                                <input name="fullName" value={delivery.fullName} onChange={handleDeliveryChange} className="w-full bg-black/60 border border-[var(--gold)]/20 rounded-lg px-4 py-3 text-white" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">Mobile</label>
+                                                <input name="mobile" value={delivery.mobile} onChange={handleDeliveryChange} className="w-full bg-black/60 border border-[var(--gold)]/20 rounded-lg px-4 py-3 text-white" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">Street</label>
+                                                <input name="street" value={delivery.street} onChange={handleDeliveryChange} className="w-full bg-black/60 border border-[var(--gold)]/20 rounded-lg px-4 py-3 text-white" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-sm text-gray-400 mb-2">City</label>
+                                                <input name="city" value={delivery.city} onChange={handleDeliveryChange} className="w-full bg-black/60 border border-[var(--gold)]/20 rounded-lg px-4 py-3 text-white" />
+                                            </div>
+                                            <div className="flex gap-3">
+                                                <button type="submit" className="px-4 py-2 bg-[var(--gold)] text-black rounded">Save</button>
+                                                <button type="button" onClick={() => setEditingDelivery(false)} className="px-4 py-2 border rounded">Cancel</button>
+                                            </div>
+                                        </form>
+                                    </div>
+                                )}
                             </div>
                         )}
                     </main>

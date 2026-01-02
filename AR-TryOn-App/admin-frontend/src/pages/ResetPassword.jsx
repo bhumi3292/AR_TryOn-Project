@@ -2,11 +2,8 @@ import React, { useState } from "react";
 import { authService } from "../services/authService";
 import { navigateTo } from "../router/router";
 
-export default function ResetPassword({ params }) {
-  const token =
-    params?.token ||
-    (typeof window !== "undefined" &&
-      window.location.pathname.split("/").pop());
+export default function ResetPassword() {
+  const [email, setEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -24,13 +21,16 @@ export default function ResetPassword({ params }) {
     try {
       setLoading(true);
       const resp = await authService.resetPassword(
-        token,
-        newPassword,
-        confirmPassword,
+        email,
+        newPassword
       );
       setMessage(resp?.message || "Password reset successful. Please sign in.");
+
+      setTimeout(() => {
+        navigateTo("login");
+      }, 2000);
     } catch (err) {
-      setError(err?.message || "Failed to reset password");
+      setError(err?.response?.data?.message || err.message || "Failed to reset password");
     } finally {
       setLoading(false);
     }
@@ -43,6 +43,14 @@ export default function ResetPassword({ params }) {
         {message && <div className="mb-3 text-green-300">{message}</div>}
         {error && <div className="mb-3 text-red-400">{error}</div>}
         <form onSubmit={submit} className="space-y-4">
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Confirm your email"
+            className="w-full p-3 rounded bg-white/5 text-white"
+          />
           <input
             type="password"
             required

@@ -6,15 +6,15 @@ opencv-python
 trimesh
 pygltflib
 python-multipart
-
-# Recommended ML stack
-diffusers==0.36.0
-transformers==4.57.3
-accelerate==1.12.0
-safetensors==0.7.0
-# Changed from 1.2.3 to a range compatible with transformers < 1.0
-huggingface_hub>=0.34.0,<1.0
+rembg
+open3d
+scipy
+torch
+torchvision
+transformers
+huggingface_hub
+accelerate
+safetensors
 omegaconf
-
-# Note: You have already installed the correct torch version:
-# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
+mobile-sam
+requests

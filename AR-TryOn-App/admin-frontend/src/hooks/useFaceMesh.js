@@ -30,11 +30,15 @@ export function useFaceMesh(options = {}) {
 
     useEffect(() => {
         let mounted = true;
+        let camera = null;
+        let faceMesh = null;
 
         const initializeFaceMesh = async () => {
+            if (isReady || error) return; // Prevent double init
+
             try {
                 // Create FaceMesh instance
-                const faceMesh = new FaceMesh({
+                faceMesh = new FaceMesh({
                     locateFile: (file) => {
                         return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
                     }
@@ -57,10 +61,15 @@ export function useFaceMesh(options = {}) {
 
                 // Initialize camera
                 if (videoRef.current) {
-                    const camera = new Camera(videoRef.current, {
+                    camera = new Camera(videoRef.current, {
                         onFrame: async () => {
+                            if (!mounted) return;
                             if (faceMeshRef.current && videoRef.current) {
-                                await faceMeshRef.current.send({ image: videoRef.current });
+                                try {
+                                    await faceMeshRef.current.send({ image: videoRef.current });
+                                } catch (e) {
+                                    // Ignore send errors during cleanup
+                                }
                             }
                         },
                         width: 1280,
@@ -82,18 +91,23 @@ export function useFaceMesh(options = {}) {
             }
         };
 
-        initializeFaceMesh();
+        if (!isReady && !error) {
+            initializeFaceMesh();
+        }
 
         return () => {
             mounted = false;
-            if (cameraRef.current) {
-                cameraRef.current.stop();
+            // Cleanup
+            if (camera) {
+                try { camera.stop(); } catch (e) { }
             }
-            if (faceMeshRef.current) {
-                faceMeshRef.current.close();
+            if (faceMesh) {
+                try { faceMesh.close(); } catch (e) { }
             }
+            cameraRef.current = null;
+            faceMeshRef.current = null;
         };
-    }, []); // Empty dependency array - only initialize once
+    }, []); // Empty dependency array - strict single run
 
     return {
         landmarks,

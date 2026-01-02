@@ -9,6 +9,15 @@ const getHeaders = () => ({
 });
 
 export const jewelleryService = {
+  async getSellerJewellery() {
+    const response = await fetch(`${API_URL}/jewelry/seller`, {
+      headers: getHeaders(),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message);
+    return data.data || data;
+  },
+
   async getAllJewellery(page = 1, limit = 10, search = "") {
     const params = new URLSearchParams({ page, limit });
     if (search) params.append("search", search);

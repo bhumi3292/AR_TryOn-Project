@@ -17,7 +17,10 @@ export async function getJewelryByCategory(
 ) {
   try {
     const params = { page, limit };
+
     if (category) params.category = category;
+    // Optimization: request only ready items from backend
+    params.tryOnStatus = 'ready';
 
     const res = await axios.get(`${API_URL}/jewelry`, {
       params,

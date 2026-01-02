@@ -1,5 +1,34 @@
-﻿**/models/
-**/checkpoints/
-**/*.glb
-**/*.png
+﻿
+# Dependencies
 node_modules/
+__pycache__/
+*.py[cod]
+.venv
+venv/
+.env
+
+# ML Service Output & Models
+**/ml-output/
+**/models/
+**/checkpoints/
+**/weights/
+AR-TryOn-App/ml-service-2dto3d/models/
+AR-TryOn-App/ml-service-2dto3d/InstantMesh/
+
+# Generated Assets (Keep .gitkeep if needed, but ignore actual files)
+# We want to ignore loose GLBs/PNGs in output dirs, but maybe keep assets in source?
+# Let's be specific about generated output.
+**/*.glb
+**/*.gltf
+**/*.png
+**/*.jpg
+**/*.jpeg
+
+# Exceptions (If you have source assets)
+# !src/assets/*.png
+# !public/*.png
+
+# IDEs
+.vscode/
+.idea/
+*.DS_Store

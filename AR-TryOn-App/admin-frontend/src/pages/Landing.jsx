@@ -56,7 +56,7 @@ export default function Landing() {
 
               <Button
                 size="lg"
-                onClick={() => navigate("/tryon")}
+                onClick={() => navigate("/jewellery")}
                 className="relative z-10 bg-gradient-to-r from-[var(--gold-soft)] to-[var(--gold-primary)] text-black font-extrabold text-lg md:text-xl px-16 py-6 rounded-full shadow-[0_0_40px_rgba(212,175,55,0.4)] hover:shadow-[0_0_60px_rgba(212,175,55,0.6)] hover:scale-105 transition-all duration-300 border border-[var(--gold-light)]"
               >
                 <span className="flex items-center gap-4 tracking-widest uppercase">

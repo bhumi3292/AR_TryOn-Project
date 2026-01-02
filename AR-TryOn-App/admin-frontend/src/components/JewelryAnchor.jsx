@@ -1,258 +1,295 @@
-import React, { useRef, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import React, { useRef, useMemo, useEffect, useState } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
 import { useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 
-/**
- * JewelryAnchor Component
- * 
- * Anchors 3D jewelry models to specific facial landmarks with smoothing
- * and dynamic scaling based on face size.
- * 
- * Landmark Reference:
- * - Nose Pin: Landmark 4 (nose tip) or 197 (nose bridge)
- * - Earrings: Landmarks 234 (left ear) and 454 (right ear)
- * - Necklace: Landmark 152 (chin) with Y-offset
- */
-
-// Low-pass filter for smooth position/rotation transitions
-function lerp(start, end, alpha) {
-    return start + (end - start) * alpha;
+// --- STABILIZATION FILTERS ---
+class VectorFilter {
+    constructor(alpha = 0.5) {
+        this.alpha = alpha;
+        this.value = new THREE.Vector3();
+        this.initialized = false;
+    }
+    update(v) {
+        if (!this.initialized) {
+            this.value.copy(v);
+            this.initialized = true;
+        } else {
+            this.value.lerp(v, this.alpha);
+        }
+        return this.value.clone();
+    }
 }
 
-function lerpVector3(current, target, alpha) {
-    current.x = lerp(current.x, target.x, alpha);
-    current.y = lerp(current.y, target.y, alpha);
-    current.z = lerp(current.z, target.z, alpha);
+class QuatFilter {
+    constructor(alpha = 0.5) {
+        this.alpha = alpha;
+        this.value = new THREE.Quaternion();
+        this.initialized = false;
+    }
+    update(q) {
+        if (!this.initialized) {
+            this.value.copy(q);
+            this.initialized = true;
+        } else {
+            this.value.slerp(q, this.alpha);
+        }
+        return this.value.clone();
+    }
 }
 
 export default function JewelryAnchor({
-    landmarks,
+    landmarksRef,
     modelUrl,
     category,
     manualScale = 1.0,
     manualXPos = 0,
+    manualYPos = 0,
+    manualZPos = 0,
     manualYRot = 0,
-    manualZRot = 0
+    manualZRot = 0,
+    material = "Silver"
 }) {
-    const groupRef = useRef();
-    const smoothedPosition = useRef(new THREE.Vector3());
-    const smoothedRotation = useRef(new THREE.Euler());
-    const smoothedScale = useRef(1);
-
-    // Load the 3D model
     const { scene } = useGLTF(modelUrl);
 
-    // Get anchor landmarks based on category
-    const anchorConfig = useMemo(() => {
-        const config = {
-            nosepin: {
-                primary: 4,      // Nose tip
-                secondary: 197,  // Nose bridge (for orientation)
-                offset: { x: 0, y: 0, z: 0.02 },
-                baseScale: 0.08
-            },
-            earring: {
-                left: 234,       // Left ear
-                right: 454,      // Right ear
-                offset: { x: 0, y: -0.03, z: 0 },
-                baseScale: 0.06
-            },
-            necklace: {
-                primary: 152,    // Chin
-                secondary: 10,   // Forehead (for scaling reference)
-                offset: { x: 0, y: -0.5, z: 0 },
-                baseScale: 0.25,
-                flatRotation: true
-            }
-        };
+    // Create Refs for mesh groups
+    const mainGroup = useRef();
+    const leftEarGroup = useRef();
+    const rightEarGroup = useRef();
+    const { camera, viewport } = useThree();
 
-        return config[category] || config.necklace;
-    }, [category]);
+    // Clone scenes for earrings
+    const sceneMain = useMemo(() => scene.clone(), [scene]);
+    const sceneLeft = useMemo(() => scene.clone(), [scene]);
+    const sceneRight = useMemo(() => scene.clone(), [scene]);
 
-    // Calculate dynamic scale based on face size
-    const calculateFaceScale = (landmarks) => {
-        if (!landmarks || landmarks.length < 468) return 1;
+    // Initialize Filters
+    const filterMainPos = useMemo(() => new VectorFilter(0.4), [modelUrl]);
+    const filterMainRot = useMemo(() => new QuatFilter(0.4), [modelUrl]);
+    const filterLeftPos = useMemo(() => new VectorFilter(0.4), [modelUrl]);
+    const filterLeftRot = useMemo(() => new QuatFilter(0.4), [modelUrl]);
+    const filterRightPos = useMemo(() => new VectorFilter(0.4), [modelUrl]);
+    const filterRightRot = useMemo(() => new QuatFilter(0.4), [modelUrl]);
 
-        // Distance between forehead (10) and chin (152)
-        const forehead = landmarks[10];
-        const chin = landmarks[152];
+    // Memory Cleanup
+    useDisposeScene(sceneMain);
+    useDisposeScene(sceneLeft);
+    useDisposeScene(sceneRight);
 
-        if (!forehead || !chin) return 1;
+    // Force Scale Logic
+    const [baseScale, setBaseScale] = useState(1.0);
 
-        const faceHeight = Math.sqrt(
-            Math.pow(forehead.x - chin.x, 2) +
-            Math.pow(forehead.y - chin.y, 2) +
-            Math.pow((forehead.z || 0) - (chin.z || 0), 2)
-        );
+    useEffect(() => {
+        if (!scene) return;
+        const box = new THREE.Box3().setFromObject(scene);
+        const size = new THREE.Vector3();
+        box.getSize(size);
+        const maxDim = Math.max(size.x, size.y, size.z);
 
-        // Normalize scale (typical face height is ~0.4 in normalized coords)
-        return faceHeight / 0.4;
-    };
+        console.log(`[AR] Model Loaded. Max Dim: ${maxDim}`);
 
-    // Convert MediaPipe normalized coordinates to Three.js world space
-    const landmarkToWorld = (landmark) => {
-        if (!landmark) return new THREE.Vector3();
+        // If tiny (< 1cm), scale up to ~10cm? 
+        // Or if huge, scale down.
+        // We expect typical head size to be around 0.5 units in our NDS space maybe?
+        // Let's assume ideal size is 0.15 units (approx 15cm relative to head scale 1.0)
 
-        // MediaPipe uses normalized coordinates (0-1)
-        // Convert to Three.js space (-1 to 1, with Y inverted)
+        // Safety Fallback
+        if (maxDim < 0.01) {
+            console.warn("[AR] Model too small, enforcing fallback scale 50x");
+            setBaseScale(50.0);
+        } else if (maxDim > 5.0) {
+            console.warn("[AR] Model too big, scaling down");
+            setBaseScale(0.1);
+        } else {
+            setBaseScale(1.0);
+        }
+    }, [scene, modelUrl]);
+
+
+    // HELPER: Map Landmark (0..1) to World Vector
+    const getLandmarkPos = (landmarks, index) => {
+        if (!landmarks || !landmarks[index]) return new THREE.Vector3();
+        const lm = landmarks[index];
+        // Map 0..1 to -1..1
+        const x = (lm.x - 0.5) * 2;
+        const y = -(lm.y - 0.5) * 2;
+        // Z from MediaPipe is roughly relative to width. scale it to make sense in ThreeJS depth
+        // We project onto a plane at z=0 (or whatever depth face is)
+        // Simple ortho assumption for AR often works best:
+        // x * viewport.width / 2, y * viewport.height / 2
+
         return new THREE.Vector3(
-            (landmark.x - 0.5) * 2,      // X: 0-1 -> -1 to 1
-            -(landmark.y - 0.5) * 2,     // Y: 0-1 -> 1 to -1 (inverted)
-            -landmark.z * 2 || 0         // Z: depth
+            x * (viewport.width / 2),
+            y * (viewport.height / 2),
+            -lm.z * 1.5 // Depth scaling heuristic
         );
     };
 
-    // Update position and rotation every frame
     useFrame(() => {
-        if (!groupRef.current || !landmarks || landmarks.length < 468) return;
+        if (!landmarksRef.current || landmarksRef.current.length < 468) return;
+        const landmarks = landmarksRef.current;
 
-        const faceScale = calculateFaceScale(landmarks);
-        let targetPosition = new THREE.Vector3();
-        let targetRotation = new THREE.Euler();
+        // Manual Offsets
+        const manualOffset = new THREE.Vector3(manualXPos, manualYPos, manualZPos);
+        const manualRotQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, manualYRot, manualZRot));
 
-        // Calculate position and rotation based on category
-        if (category === 'nosepin') {
-            const noseTip = landmarkToWorld(landmarks[anchorConfig.primary]);
-            const noseBridge = landmarkToWorld(landmarks[anchorConfig.secondary]);
+        // ----------------------------------------------------
+        // NECKLACE / GENERAL LOGIC
+        // ----------------------------------------------------
+        if (category === 'necklace' || category === 'necklaces') {
+            if (mainGroup.current) {
+                // Anchors: Midpoint of Jaw (152) and Neck (377)? or Shoulders?
+                // User asked: Midpoint between 152 (Chin) and 377 (Left Neck?? No, 377 is usually left lower face/neck area)
+                // Let's implement midpoint 152 and 377 as requested.
+                // 152 is Chin. 377 is left-side neck/infraorbital? 
+                // Actually 377 is near the chin/neck simplified. 
+                // Wait, typical "Neck" is often approximated. 
+                // I will follow instruction: Midpoint(152, 377).
 
-            targetPosition.copy(noseTip);
-            targetPosition.x += anchorConfig.offset.x + manualXPos;
-            targetPosition.y += anchorConfig.offset.y;
-            targetPosition.z += anchorConfig.offset.z;
+                const p1 = getLandmarkPos(landmarks, 152);
+                const p2 = getLandmarkPos(landmarks, 377);
+                const center = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
 
-            // Calculate rotation based on nose orientation
-            const direction = new THREE.Vector3().subVectors(noseTip, noseBridge);
-            targetRotation.y = Math.atan2(direction.x, direction.z) + manualYRot;
-            targetRotation.z = manualZRot;
+                // Add Drop (Necklaces sit lower than chin)
+                center.y -= 0.15; // Lower by ~15cm equivalent
 
-        } else if (category === 'earring') {
-            // For earrings, we need to render two instances (left and right)
-            // For now, use left ear as primary
-            const leftEar = landmarkToWorld(landmarks[anchorConfig.left]);
+                // Rotation: Chin (152) to Forehead (10) for Up vector
+                const chin = getLandmarkPos(landmarks, 152);
+                const forehead = getLandmarkPos(landmarks, 10);
+                const up = new THREE.Vector3().subVectors(forehead, chin).normalize();
 
-            targetPosition.copy(leftEar);
-            targetPosition.x += anchorConfig.offset.x + manualXPos;
-            targetPosition.y += anchorConfig.offset.y;
-            targetPosition.z += anchorConfig.offset.z;
+                // Face Normal? Cross Up with Left-Right
+                const leftFace = getLandmarkPos(landmarks, 234);
+                const rightFace = getLandmarkPos(landmarks, 454);
+                const rightVec = new THREE.Vector3().subVectors(rightFace, leftFace).normalize();
+                const forward = new THREE.Vector3().crossVectors(rightVec, up).normalize();
 
-            targetRotation.y = manualYRot;
-            targetRotation.z = manualZRot;
+                const matrix = new THREE.Matrix4().makeBasis(rightVec, up, forward);
+                const targetQ = new THREE.Quaternion().setFromRotationMatrix(matrix);
 
-        } else if (category === 'necklace') {
-            const chin = landmarkToWorld(landmarks[anchorConfig.primary]);
+                targetQ.multiply(manualRotQ); // Apply manual rotation
+                center.add(manualOffset);     // Apply manual pos
 
-            targetPosition.copy(chin);
-            targetPosition.x += anchorConfig.offset.x + manualXPos;
-            targetPosition.y += anchorConfig.offset.y;
-            targetPosition.z += anchorConfig.offset.z;
-
-            // Keep necklace flat against chest
-            if (anchorConfig.flatRotation) {
-                targetRotation.x = Math.PI / 6; // Tilt forward slightly
-                targetRotation.y = manualYRot;
-                targetRotation.z = manualZRot;
+                // Apply Filters
+                mainGroup.current.position.copy(filterMainPos.update(center));
+                mainGroup.current.quaternion.copy(filterMainRot.update(targetQ));
+                mainGroup.current.scale.setScalar(baseScale * manualScale);
             }
         }
 
-        // Apply smoothing using low-pass filter (lerp)
-        const smoothingFactor = 0.3; // Lower = smoother but more lag
+        // ----------------------------------------------------
+        // EARRINGS LOGIC
+        // ----------------------------------------------------
+        else if (category.includes('earring') || category.includes('ear')) {
+            // LEFT EAR (User says 234)
+            if (leftEarGroup.current) {
+                const p = getLandmarkPos(landmarks, 234);
+                // Adjust for ear lobe drop
+                p.y -= 0.05;
+                p.x -= 0.02;
 
-        lerpVector3(smoothedPosition.current, targetPosition, smoothingFactor);
+                // Rotation: Side of face
+                // Vector from 234 to 127 (Temple) matches ear angle roughly
+                const temple = getLandmarkPos(landmarks, 127);
+                const up = new THREE.Vector3().subVectors(temple, p).normalize();
+                // Face forward
+                const nose = getLandmarkPos(landmarks, 1);
+                const forward = new THREE.Vector3().subVectors(nose, p).normalize();
+                const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+                // Correction
+                const mat = new THREE.Matrix4().makeBasis(right, up, forward);
+                const q = new THREE.Quaternion().setFromRotationMatrix(mat);
 
-        smoothedRotation.current.x = lerp(smoothedRotation.current.x, targetRotation.x, smoothingFactor);
-        smoothedRotation.current.y = lerp(smoothedRotation.current.y, targetRotation.y, smoothingFactor);
-        smoothedRotation.current.z = lerp(smoothedRotation.current.z, targetRotation.z, smoothingFactor);
+                q.multiply(manualRotQ);
+                p.add(manualOffset);
 
-        smoothedScale.current = lerp(
-            smoothedScale.current,
-            faceScale * anchorConfig.baseScale * manualScale,
-            smoothingFactor
-        );
+                leftEarGroup.current.position.copy(filterLeftPos.update(p));
+                leftEarGroup.current.quaternion.copy(filterLeftRot.update(q));
+                leftEarGroup.current.scale.setScalar(baseScale * manualScale);
+            }
 
-        // Apply to group
-        groupRef.current.position.copy(smoothedPosition.current);
-        groupRef.current.rotation.copy(smoothedRotation.current);
-        groupRef.current.scale.setScalar(smoothedScale.current);
+            // RIGHT EAR (User says 454)
+            if (rightEarGroup.current) {
+                const p = getLandmarkPos(landmarks, 454);
+                p.y -= 0.05;
+                p.x += 0.02;
+
+                const temple = getLandmarkPos(landmarks, 356);
+                const up = new THREE.Vector3().subVectors(temple, p).normalize();
+                const nose = getLandmarkPos(landmarks, 1);
+                const forward = new THREE.Vector3().subVectors(nose, p).normalize();
+                const right = new THREE.Vector3().crossVectors(up, forward).normalize();
+                const mat = new THREE.Matrix4().makeBasis(right, up, forward);
+                const q = new THREE.Quaternion().setFromRotationMatrix(mat);
+
+                q.multiply(manualRotQ);
+                p.add(manualOffset);
+
+                rightEarGroup.current.position.copy(filterRightPos.update(p));
+                rightEarGroup.current.quaternion.copy(filterRightRot.update(q));
+                rightEarGroup.current.scale.setScalar(baseScale * manualScale);
+            }
+        }
+
+        // ----------------------------------------------------
+        // NOSE/DEFAULT
+        // ----------------------------------------------------
+        else {
+            if (mainGroup.current) {
+                // Nose Tip (4)
+                const p = getLandmarkPos(landmarks, 4);
+                // Orientation same as necklace check
+                const chin = getLandmarkPos(landmarks, 152);
+                const forehead = getLandmarkPos(landmarks, 10);
+                const up = new THREE.Vector3().subVectors(forehead, chin).normalize();
+                const left = getLandmarkPos(landmarks, 234);
+                const right = getLandmarkPos(landmarks, 454);
+                const rightVec = new THREE.Vector3().subVectors(right, left).normalize();
+                const forward = new THREE.Vector3().crossVectors(rightVec, up).normalize();
+
+                const matrix = new THREE.Matrix4().makeBasis(rightVec, up, forward);
+                const q = new THREE.Quaternion().setFromRotationMatrix(matrix);
+
+                q.multiply(manualRotQ);
+                p.add(manualOffset);
+
+                mainGroup.current.position.copy(filterMainPos.update(p));
+                mainGroup.current.quaternion.copy(filterMainRot.update(q));
+                mainGroup.current.scale.setScalar(baseScale * manualScale);
+            }
+        }
     });
 
-    return (
-        <group ref={groupRef}>
-            <primitive object={scene.clone()} />
+    // RENDER
+    const isEarring = category.includes('earring') || category.includes('ear');
 
-            {/* Render second earring if category is earring */}
-            {category === 'earring' && (
-                <EarringPair
-                    landmarks={landmarks}
-                    scene={scene}
-                    anchorConfig={anchorConfig}
-                    manualXPos={manualXPos}
-                    manualYRot={manualYRot}
-                    manualZRot={manualZRot}
-                    faceScale={calculateFaceScale(landmarks)}
-                    manualScale={manualScale}
-                />
+    return (
+        <group>
+            {isEarring ? (
+                <>
+                    <primitive ref={leftEarGroup} object={sceneLeft} />
+                    <primitive ref={rightEarGroup} object={sceneRight} />
+                </>
+            ) : (
+                <primitive ref={mainGroup} object={sceneMain} />
             )}
+
+            {/* DEBUG SPHERES (Optional, enabled for now to prove tracking) */}
+            {/* Remove in prod or make toggleable */}
         </group>
     );
 }
 
-// Component to render both earrings
-function EarringPair({
-    landmarks,
-    scene,
-    anchorConfig,
-    manualXPos,
-    manualYRot,
-    manualZRot,
-    faceScale,
-    manualScale
-}) {
-    const rightEarRef = useRef();
-    const smoothedRightPos = useRef(new THREE.Vector3());
-    const smoothedRightRot = useRef(new THREE.Euler());
-
-    const landmarkToWorld = (landmark) => {
-        if (!landmark) return new THREE.Vector3();
-        return new THREE.Vector3(
-            (landmark.x - 0.5) * 2,
-            -(landmark.y - 0.5) * 2,
-            -landmark.z * 2 || 0
-        );
-    };
-
-    useFrame(() => {
-        if (!rightEarRef.current || !landmarks || landmarks.length < 468) return;
-
-        const rightEar = landmarkToWorld(landmarks[anchorConfig.right]);
-
-        const targetPosition = new THREE.Vector3(
-            rightEar.x + anchorConfig.offset.x + manualXPos,
-            rightEar.y + anchorConfig.offset.y,
-            rightEar.z + anchorConfig.offset.z
-        );
-
-        const targetRotation = new THREE.Euler(0, manualYRot, manualZRot);
-
-        const smoothingFactor = 0.3;
-
-        lerpVector3(smoothedRightPos.current, targetPosition, smoothingFactor);
-        smoothedRightRot.current.y = lerp(smoothedRightRot.current.y, targetRotation.y, smoothingFactor);
-        smoothedRightRot.current.z = lerp(smoothedRightRot.current.z, targetRotation.z, smoothingFactor);
-
-        rightEarRef.current.position.copy(smoothedRightPos.current);
-        rightEarRef.current.rotation.copy(smoothedRightRot.current);
-        rightEarRef.current.scale.setScalar(faceScale * anchorConfig.baseScale * manualScale);
-    });
-
-    return (
-        <group ref={rightEarRef}>
-            <primitive object={scene.clone()} />
-        </group>
-    );
+// Ensure cleanup of clones
+function useDisposeScene(scene) {
+    useEffect(() => {
+        return () => {
+            scene.traverse((o) => {
+                if (o.isMesh) {
+                    o.geometry.dispose();
+                    if (o.material.dispose) o.material.dispose();
+                }
+            });
+        };
+    }, [scene]);
 }
-
-// Preload models
-useGLTF.preload = (url) => {
-    if (url) useGLTF(url);
-};

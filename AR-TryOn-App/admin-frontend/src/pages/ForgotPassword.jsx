@@ -15,11 +15,23 @@ export default function ForgotPassword() {
     try {
       setLoading(true);
       const resp = await authService.forgotPassword(email);
-      setMessage(
-        resp?.message || "If an account exists, a reset link has been sent.",
-      );
+      // Requirement: Simple reset without email service.
+      // We assume user is verified (or just mocked) and redirect to reset page.
+      // In a real app with no email service, this flow is unusual, but per requirements:
+      // "Forgot Password (simple reset, no email/OTP)"
+      // So we just let them proceed.
+      setMessage(resp?.message || "Email verified.");
+
+      // Delay slightly to show message then redirect
+      setTimeout(() => {
+        // Using window.location or navigate helper
+        // We can use navigate from router
+        import("../router/router").then(({ navigate }) => {
+          navigate("/reset-password");
+        });
+      }, 1000);
     } catch (err) {
-      setError(err?.message || "Failed to send reset link");
+      setError(err?.response?.data?.message || err.message || "Failed to verify email");
     } finally {
       setLoading(false);
     }
