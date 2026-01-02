@@ -81,28 +81,41 @@ export default function JewelryAnchor({
 
     useEffect(() => {
         if (!scene) return;
+
+        // 1. Compute Bounding Box
         const box = new THREE.Box3().setFromObject(scene);
         const size = new THREE.Vector3();
         box.getSize(size);
+        const center = new THREE.Vector3();
+        box.getCenter(center);
+
+        // 2. Logging
         const maxDim = Math.max(size.x, size.y, size.z);
+        console.log(`[AR DEBUG] Model Loaded: ${modelUrl}`);
+        console.log(`[AR DEBUG] Raw BBox Size:`, size);
+        console.log(`[AR DEBUG] Raw Center:`, center);
+        console.log(`[AR DEBUG] Max Dimension: ${maxDim}`);
 
-        console.log(`[AR] Model Loaded. Max Dim: ${maxDim}`);
+        // 3. Normalize to Target Size (0.15m = 15cm)
+        const TARGET_SIZE = 0.15;
 
-        // If tiny (< 1cm), scale up to ~10cm? 
-        // Or if huge, scale down.
-        // We expect typical head size to be around 0.5 units in our NDS space maybe?
-        // Let's assume ideal size is 0.15 units (approx 15cm relative to head scale 1.0)
+        let finalScale = 1.0;
 
-        // Safety Fallback
-        if (maxDim < 0.01) {
-            console.warn("[AR] Model too small, enforcing fallback scale 50x");
-            setBaseScale(50.0);
-        } else if (maxDim > 5.0) {
-            console.warn("[AR] Model too big, scaling down");
-            setBaseScale(0.1);
+        if (maxDim < 0.0001) {
+            console.warn("[AR CRITICAL] Model is seemingly empty or point-sized. Forcing fallback scale 100x.");
+            finalScale = 100.0;
         } else {
-            setBaseScale(1.0);
+            // Scale it so max dimension becomes TARGET_SIZE
+            finalScale = TARGET_SIZE / maxDim;
+            console.log(`[AR DEBUG] Computed Normalization Scale: ${finalScale.toFixed(4)}x to reach ${TARGET_SIZE}m`);
         }
+
+        // 4. Center Mesh (Critical for Rotation)
+        // We move the scene contents, not the group, so rotation pivots around 0,0,0
+        scene.position.sub(center);
+
+        setBaseScale(finalScale);
+
     }, [scene, modelUrl]);
 
 

@@ -188,7 +188,7 @@ export default function ARCanvas({
                         toneMapping: THREE.ACESFilmicToneMapping,
                         outputColorSpace: THREE.SRGBColorSpace,
                     }}
-                    camera={{ position: [0, 0, 1], fov: 63 }}
+                    camera={{ position: [0, 0, 1], fov: 45, near: 0.01, far: 10 }}
                     onCreated={({ gl }) => {
                         // Store gl for cleanup
                         glRef.current = gl;
@@ -207,6 +207,10 @@ export default function ARCanvas({
                 >
                     <ambientLight intensity={0.5} />
                     <Environment preset="studio" />
+
+                    {/* DEBUG TOOLS: Forced Visual Reference */}
+                    <axesHelper args={[5]} />
+                    <gridHelper args={[10, 10]} />
 
                     <Suspense fallback={
                         <Html center>
