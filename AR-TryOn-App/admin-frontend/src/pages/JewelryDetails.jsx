@@ -60,7 +60,7 @@ export default function JewelryDetails() {
     };
 
     const handleTryOn = () => {
-        navigate(`/try-on/${product?._id}`);
+        navigate(`/try-on/${product?._id}`, { state: { item: product } });
     };
 
     if (loading) return <div className="min-h-screen bg-black flex items-center justify-center text-[var(--gold)]">Loading...</div>;

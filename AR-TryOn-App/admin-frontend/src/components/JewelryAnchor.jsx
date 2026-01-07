@@ -1,308 +1,405 @@
 import React, { useRef, useMemo, useEffect, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { useGLTF } from '@react-three/drei';
+import { useGLTF, Environment } from '@react-three/drei';
 import * as THREE from 'three';
 
-// --- STABILIZATION FILTERS ---
+/* =========================
+   SMOOTHING FILTERS
+========================= */
 class VectorFilter {
-    constructor(alpha = 0.5) {
-        this.alpha = alpha;
-        this.value = new THREE.Vector3();
-        this.initialized = false;
+  constructor(alpha = 0.25) {
+    this.alpha = alpha;
+    this.value = new THREE.Vector3();
+    this.initialized = false;
+  }
+  update(v) {
+    if (!this.initialized) {
+      this.value.copy(v);
+      this.initialized = true;
+    } else {
+      this.value.lerp(v, this.alpha);
     }
-    update(v) {
-        if (!this.initialized) {
-            this.value.copy(v);
-            this.initialized = true;
-        } else {
-            this.value.lerp(v, this.alpha);
-        }
-        return this.value.clone();
-    }
+    return this.value.clone();
+  }
 }
 
 class QuatFilter {
-    constructor(alpha = 0.5) {
-        this.alpha = alpha;
-        this.value = new THREE.Quaternion();
-        this.initialized = false;
+  constructor(alpha = 0.25) {
+    this.alpha = alpha;
+    this.value = new THREE.Quaternion();
+    this.initialized = false;
+  }
+  update(q) {
+    if (!this.initialized) {
+      this.value.copy(q);
+      this.initialized = true;
+    } else {
+      this.value.slerp(q, this.alpha);
     }
-    update(q) {
-        if (!this.initialized) {
-            this.value.copy(q);
-            this.initialized = true;
-        } else {
-            this.value.slerp(q, this.alpha);
-        }
-        return this.value.clone();
-    }
+    return this.value.clone();
+  }
 }
 
+/* =========================
+   COMPONENT
+========================= */
 export default function JewelryAnchor({
-    landmarksRef,
-    modelUrl,
-    category,
-    manualScale = 1.0,
-    manualXPos = 0,
-    manualYPos = 0,
-    manualZPos = 0,
-    manualYRot = 0,
-    manualZRot = 0,
-    material = "Silver"
+  modelUrl,
+  category,
+  landmarksRef,
+  manualScale = 1,
+  confidenceScore = 1.0, // optional
+  debugMode = false,
 }) {
-    const { scene } = useGLTF(modelUrl);
+  const { scene } = useGLTF(modelUrl);
+  const { camera, scene: threeScene } = useThree();
 
-    // Create Refs for mesh groups
-    const mainGroup = useRef();
-    const leftEarGroup = useRef();
-    const rightEarGroup = useRef();
-    const { camera, viewport } = useThree();
+  const mainGroup = useRef();
+  const leftEarGroup = useRef();
+  const rightEarGroup = useRef();
 
-    // Clone scenes for earrings
-    const sceneMain = useMemo(() => scene.clone(), [scene]);
-    const sceneLeft = useMemo(() => scene.clone(), [scene]);
-    const sceneRight = useMemo(() => scene.clone(), [scene]);
+  const filterPos = useMemo(() => new VectorFilter(0.25), [modelUrl]);
+  const filterRot = useMemo(() => new QuatFilter(0.25), [modelUrl]);
 
-    // Initialize Filters
-    const filterMainPos = useMemo(() => new VectorFilter(0.4), [modelUrl]);
-    const filterMainRot = useMemo(() => new QuatFilter(0.4), [modelUrl]);
-    const filterLeftPos = useMemo(() => new VectorFilter(0.4), [modelUrl]);
-    const filterLeftRot = useMemo(() => new QuatFilter(0.4), [modelUrl]);
-    const filterRightPos = useMemo(() => new VectorFilter(0.4), [modelUrl]);
-    const filterRightRot = useMemo(() => new QuatFilter(0.4), [modelUrl]);
+  const sceneMain = useMemo(() => scene.clone(true), [scene]);
+  const sceneLeft = useMemo(() => scene.clone(true), [scene]);
+  const sceneRight = useMemo(() => scene.clone(true), [scene]);
 
-    // Memory Cleanup
-    useDisposeScene(sceneMain);
-    useDisposeScene(sceneLeft);
-    useDisposeScene(sceneRight);
+  const baseScaleRef = useRef(1);
+  const [isValidModel, setIsValidModel] = useState(false);
 
-    // Force Scale Logic
-    const [baseScale, setBaseScale] = useState(1.0);
+  const CATEGORY_SCALES = {
+    necklace: 0.2,
+    earring: 0.02,
+    nosepin: 0.005,
+  };
 
-    useEffect(() => {
-        if (!scene) return;
+  /* =========================
+     MODEL NORMALIZATION
+  ========================= */
+  useEffect(() => {
+    if (!scene) return;
 
-        // 1. Compute Bounding Box
-        const box = new THREE.Box3().setFromObject(scene);
-        const size = new THREE.Vector3();
-        box.getSize(size);
-        const center = new THREE.Vector3();
-        box.getCenter(center);
+    // Safety Shield: compute one locked scale from the original scene
+    const box = new THREE.Box3().setFromObject(scene);
+    const size = new THREE.Vector3();
+    box.getSize(size);
 
-        // 2. Logging
-        const maxDim = Math.max(size.x, size.y, size.z);
-        console.log(`[AR DEBUG] Model Loaded: ${modelUrl}`);
-        console.log(`[AR DEBUG] Raw BBox Size:`, size);
-        console.log(`[AR DEBUG] Raw Center:`, center);
-        console.log(`[AR DEBUG] Max Dimension: ${maxDim}`);
+    // 1. Safety Check: floor to avoid division by zero for broken models
+    const maxDim = Math.max(size.x, size.y, size.z, 0.001);
 
-        // 3. Normalize to Target Size (0.15m = 15cm)
-        const TARGET_SIZE = 0.15;
+    // 2. Set Target per category mapping (necklace default increased to 0.2)
+    const currentCategory = (category || '').toLowerCase().trim();
+    const targetSize = CATEGORY_SCALES[currentCategory] || 0.05;
 
-        let finalScale = 1.0;
+    // 3. Compute once and store in ref
+    const computedScale = targetSize / maxDim;
 
-        if (maxDim < 0.0001) {
-            console.warn("[AR CRITICAL] Model is seemingly empty or point-sized. Forcing fallback scale 100x.");
-            finalScale = 100.0;
-        } else {
-            // Scale it so max dimension becomes TARGET_SIZE
-            finalScale = TARGET_SIZE / maxDim;
-            console.log(`[AR DEBUG] Computed Normalization Scale: ${finalScale.toFixed(4)}x to reach ${TARGET_SIZE}m`);
-        }
+    // 4. Clamp the scale: never allow > 10x
+    const finalLockedScale = Math.min(computedScale, 10.0);
+    baseScaleRef.current = finalLockedScale;
 
-        // 4. Center Mesh (Critical for Rotation)
-        // We move the scene contents, not the group, so rotation pivots around 0,0,0
-        scene.position.sub(center);
-
-        setBaseScale(finalScale);
-
-    }, [scene, modelUrl]);
-
-
-    // HELPER: Map Landmark (0..1) to World Vector
-    const getLandmarkPos = (landmarks, index) => {
-        if (!landmarks || !landmarks[index]) return new THREE.Vector3();
-        const lm = landmarks[index];
-        // Map 0..1 to -1..1
-        const x = (lm.x - 0.5) * 2;
-        const y = -(lm.y - 0.5) * 2;
-        // Z from MediaPipe is roughly relative to width. scale it to make sense in ThreeJS depth
-        // We project onto a plane at z=0 (or whatever depth face is)
-        // Simple ortho assumption for AR often works best:
-        // x * viewport.width / 2, y * viewport.height / 2
-
-        return new THREE.Vector3(
-            x * (viewport.width / 2),
-            y * (viewport.height / 2),
-            -lm.z * 1.5 // Depth scaling heuristic
-        );
-    };
-
-    useFrame(() => {
-        if (!landmarksRef.current || landmarksRef.current.length < 468) return;
-        const landmarks = landmarksRef.current;
-
-        // Manual Offsets
-        const manualOffset = new THREE.Vector3(manualXPos, manualYPos, manualZPos);
-        const manualRotQ = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, manualYRot, manualZRot));
-
-        // ----------------------------------------------------
-        // NECKLACE / GENERAL LOGIC
-        // ----------------------------------------------------
-        if (category === 'necklace' || category === 'necklaces') {
-            if (mainGroup.current) {
-                // Anchors: Midpoint of Jaw (152) and Neck (377)? or Shoulders?
-                // User asked: Midpoint between 152 (Chin) and 377 (Left Neck?? No, 377 is usually left lower face/neck area)
-                // Let's implement midpoint 152 and 377 as requested.
-                // 152 is Chin. 377 is left-side neck/infraorbital? 
-                // Actually 377 is near the chin/neck simplified. 
-                // Wait, typical "Neck" is often approximated. 
-                // I will follow instruction: Midpoint(152, 377).
-
-                const p1 = getLandmarkPos(landmarks, 152);
-                const p2 = getLandmarkPos(landmarks, 377);
-                const center = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
-
-                // Add Drop (Necklaces sit lower than chin)
-                center.y -= 0.15; // Lower by ~15cm equivalent
-
-                // Rotation: Chin (152) to Forehead (10) for Up vector
-                const chin = getLandmarkPos(landmarks, 152);
-                const forehead = getLandmarkPos(landmarks, 10);
-                const up = new THREE.Vector3().subVectors(forehead, chin).normalize();
-
-                // Face Normal? Cross Up with Left-Right
-                const leftFace = getLandmarkPos(landmarks, 234);
-                const rightFace = getLandmarkPos(landmarks, 454);
-                const rightVec = new THREE.Vector3().subVectors(rightFace, leftFace).normalize();
-                const forward = new THREE.Vector3().crossVectors(rightVec, up).normalize();
-
-                const matrix = new THREE.Matrix4().makeBasis(rightVec, up, forward);
-                const targetQ = new THREE.Quaternion().setFromRotationMatrix(matrix);
-
-                targetQ.multiply(manualRotQ); // Apply manual rotation
-                center.add(manualOffset);     // Apply manual pos
-
-                // Apply Filters
-                mainGroup.current.position.copy(filterMainPos.update(center));
-                mainGroup.current.quaternion.copy(filterMainRot.update(targetQ));
-                mainGroup.current.scale.setScalar(baseScale * manualScale);
-            }
-        }
-
-        // ----------------------------------------------------
-        // EARRINGS LOGIC
-        // ----------------------------------------------------
-        else if (category.includes('earring') || category.includes('ear')) {
-            // LEFT EAR (User says 234)
-            if (leftEarGroup.current) {
-                const p = getLandmarkPos(landmarks, 234);
-                // Adjust for ear lobe drop
-                p.y -= 0.05;
-                p.x -= 0.02;
-
-                // Rotation: Side of face
-                // Vector from 234 to 127 (Temple) matches ear angle roughly
-                const temple = getLandmarkPos(landmarks, 127);
-                const up = new THREE.Vector3().subVectors(temple, p).normalize();
-                // Face forward
-                const nose = getLandmarkPos(landmarks, 1);
-                const forward = new THREE.Vector3().subVectors(nose, p).normalize();
-                const right = new THREE.Vector3().crossVectors(up, forward).normalize();
-                // Correction
-                const mat = new THREE.Matrix4().makeBasis(right, up, forward);
-                const q = new THREE.Quaternion().setFromRotationMatrix(mat);
-
-                q.multiply(manualRotQ);
-                p.add(manualOffset);
-
-                leftEarGroup.current.position.copy(filterLeftPos.update(p));
-                leftEarGroup.current.quaternion.copy(filterLeftRot.update(q));
-                leftEarGroup.current.scale.setScalar(baseScale * manualScale);
-            }
-
-            // RIGHT EAR (User says 454)
-            if (rightEarGroup.current) {
-                const p = getLandmarkPos(landmarks, 454);
-                p.y -= 0.05;
-                p.x += 0.02;
-
-                const temple = getLandmarkPos(landmarks, 356);
-                const up = new THREE.Vector3().subVectors(temple, p).normalize();
-                const nose = getLandmarkPos(landmarks, 1);
-                const forward = new THREE.Vector3().subVectors(nose, p).normalize();
-                const right = new THREE.Vector3().crossVectors(up, forward).normalize();
-                const mat = new THREE.Matrix4().makeBasis(right, up, forward);
-                const q = new THREE.Quaternion().setFromRotationMatrix(mat);
-
-                q.multiply(manualRotQ);
-                p.add(manualOffset);
-
-                rightEarGroup.current.position.copy(filterRightPos.update(p));
-                rightEarGroup.current.quaternion.copy(filterRightRot.update(q));
-                rightEarGroup.current.scale.setScalar(baseScale * manualScale);
-            }
-        }
-
-        // ----------------------------------------------------
-        // NOSE/DEFAULT
-        // ----------------------------------------------------
-        else {
-            if (mainGroup.current) {
-                // Nose Tip (4)
-                const p = getLandmarkPos(landmarks, 4);
-                // Orientation same as necklace check
-                const chin = getLandmarkPos(landmarks, 152);
-                const forehead = getLandmarkPos(landmarks, 10);
-                const up = new THREE.Vector3().subVectors(forehead, chin).normalize();
-                const left = getLandmarkPos(landmarks, 234);
-                const right = getLandmarkPos(landmarks, 454);
-                const rightVec = new THREE.Vector3().subVectors(right, left).normalize();
-                const forward = new THREE.Vector3().crossVectors(rightVec, up).normalize();
-
-                const matrix = new THREE.Matrix4().makeBasis(rightVec, up, forward);
-                const q = new THREE.Quaternion().setFromRotationMatrix(matrix);
-
-                q.multiply(manualRotQ);
-                p.add(manualOffset);
-
-                mainGroup.current.position.copy(filterMainPos.update(p));
-                mainGroup.current.quaternion.copy(filterMainRot.update(q));
-                mainGroup.current.scale.setScalar(baseScale * manualScale);
-            }
-        }
+    // Shiny gold material using scene environment
+    const overrideMaterial = new THREE.MeshStandardMaterial({
+      color: '#FFD700', // Brighter Gold
+      metalness: 1.0,
+      roughness: 0.1,   // Very shiny
+      envMapIntensity: 1.5,
     });
 
-    // RENDER
-    const isEarring = category.includes('earring') || category.includes('ear');
+    // Sanitize clones but DO NOT compute scale per-frame — clones left at neutral scale
+    [sceneMain, sceneLeft, sceneRight].forEach(s => {
+      if (!s) return;
 
-    return (
-        <group>
-            {isEarring ? (
-                <>
-                    <primitive ref={leftEarGroup} object={sceneLeft} />
-                    <primitive ref={rightEarGroup} object={sceneRight} />
-                </>
-            ) : (
-                <primitive ref={mainGroup} object={sceneMain} />
-            )}
+      s.traverse(o => {
+        if (o.isMesh) {
+          try {
+            if (o.geometry) {
+              try { o.geometry.computeVertexNormals(); } catch (e) { }
+              try { o.geometry.computeBoundingBox(); } catch (e) { }
+              try { o.geometry.computeBoundingSphere(); } catch (e) { }
+            }
 
-            {/* DEBUG SPHERES (Optional, enabled for now to prove tracking) */}
-            {/* Remove in prod or make toggleable */}
-        </group>
-    );
-}
+            o.frustumCulled = false;
+            o.castShadow = true;
+            o.receiveShadow = true;
 
-// Ensure cleanup of clones
-function useDisposeScene(scene) {
-    useEffect(() => {
-        return () => {
-            scene.traverse((o) => {
-                if (o.isMesh) {
-                    o.geometry.dispose();
-                    if (o.material.dispose) o.material.dispose();
-                }
-            });
-        };
-    }, [scene]);
+            if (o.material) {
+              try {
+                o.material.side = THREE.DoubleSide;
+                o.material.transparent = false;
+                o.material.opacity = 1.0;
+              } catch (e) { }
+            }
+          } catch (e) { }
+        }
+      });
+
+      // Compute fresh bounding box for this cloned scene and recentre geometry
+      const localBox = new THREE.Box3().setFromObject(s);
+      const localSize = new THREE.Vector3();
+      const localCenter = new THREE.Vector3();
+      localBox.getSize(localSize);
+      localBox.getCenter(localCenter);
+
+      s.traverse(o => {
+        if (o.isMesh && o.geometry && o.geometry.translate) {
+          try { o.geometry.translate(-localCenter.x, -localCenter.y, -localCenter.z); } catch (e) { }
+        }
+      });
+
+      // Keep clone at neutral scale — actual displayed scale is applied from baseScaleRef in the frame loop
+      try { s.scale.setScalar(1); } catch (e) { }
+
+      // Apply safe override material
+      s.traverse(node => {
+        if (node.isMesh) {
+          try {
+            node.material = overrideMaterial;
+            node.material.depthWrite = true;
+            node.material.needsUpdate = true;
+            node.frustumCulled = false;
+          } catch (e) { }
+        }
+      });
+    });
+
+    setIsValidModel(true);
+  }, [scene, modelUrl, category]);
+
+  // Reset scales when a new model is loaded to avoid carrying over exploded state
+  useEffect(() => {
+    if (!modelUrl) return;
+
+    // Hide and zero-scale previous/exploded models immediately
+    try {
+      if (mainGroup.current) {
+        mainGroup.current.visible = false;
+        mainGroup.current.scale.set(0, 0, 0);
+      }
+      if (leftEarGroup.current) {
+        leftEarGroup.current.visible = false;
+        leftEarGroup.current.scale.set(0, 0, 0);
+      }
+      if (rightEarGroup.current) {
+        rightEarGroup.current.visible = false;
+        rightEarGroup.current.scale.set(0, 0, 0);
+      }
+    } catch (e) { }
+
+    // Restore scale/visibility on next animation frame once baseScaleRef is available
+    requestAnimationFrame(() => {
+      const restore = baseScaleRef.current && Number.isFinite(baseScaleRef.current) && baseScaleRef.current > 0;
+      if (!restore) return;
+      try {
+        if (mainGroup.current) {
+          mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
+          mainGroup.current.visible = true;
+        }
+        if (leftEarGroup.current) {
+          leftEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
+          leftEarGroup.current.visible = true;
+        }
+        if (rightEarGroup.current) {
+          rightEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
+          rightEarGroup.current.visible = true;
+        }
+      } catch (e) { }
+    });
+  }, [modelUrl, manualScale]);
+
+  /* =========================
+      LANDMARK → WORLD
+  ========================= */
+  function getWorldPos(landmarks, idx) {
+    if (!landmarks || !landmarks[idx]) return null;
+    const lm = landmarks[idx];
+    const x = (lm.x - 0.5) * 2;
+    const y = -(lm.y - 0.5) * 2;
+    const zDepth = 0.8; // push further into scene
+    const vec = new THREE.Vector3(x, y, zDepth);
+    vec.unproject(camera);
+    return vec;
+  }
+
+  function forceNormalizeObject(object) {
+    const box = new THREE.Box3().setFromObject(object);
+    const size = new THREE.Vector3();
+    const center = new THREE.Vector3();
+
+    box.getSize(size);
+    box.getCenter(center);
+
+    // Recenter to origin
+    object.position.sub(center);
+
+    const maxDim = Math.max(size.x, size.y, size.z);
+
+    // Brutal fallback if model is broken
+    if (!Number.isFinite(maxDim) || maxDim < 1e-4) {
+      object.scale.set(50, 50, 50);
+    } else {
+      const scale = 0.15 / maxDim; // ~15cm jewelry size
+      object.scale.setScalar(scale);
+    }
+  }
+
+  /* =========================
+     RENDER LOOP
+  ========================= */
+  useFrame(() => {
+    const landmarks = landmarksRef?.current;
+
+    // Reset rotations and force visibility for debugging (temporary)
+    if (mainGroup.current) {
+      mainGroup.current.rotation.set(0, 0, 0);
+      mainGroup.current.visible = true;
+    }
+    if (leftEarGroup.current) {
+      leftEarGroup.current.rotation.set(0, 0, 0);
+      leftEarGroup.current.visible = true;
+    }
+    if (rightEarGroup.current) {
+      rightEarGroup.current.rotation.set(0, 0, 0);
+      rightEarGroup.current.visible = true;
+    }
+
+    if (!landmarks || !isValidModel) {
+      // Keep guards but do not hide; visibility is forced above for debugging
+      return;
+    }
+
+    // Ensure required landmark indices exist for current category
+    const requiredIndices =
+      category === 'necklace' ? [152] : category === 'earring' ? [234, 454] : category === 'nosepin' ? [1] : [];
+    for (let idx of requiredIndices) {
+      if (!landmarks[idx]) {
+        return; // abort frame if tracking data incomplete
+      }
+    }
+
+    // confidenceScore is OPTIONAL – only block if provided AND low
+    if (typeof confidenceScore === 'number' && confidenceScore < 0.85) {
+      return;
+    }
+
+    // Per-category anchoring
+    switch ((category || '').toLowerCase().trim()) {
+      case 'necklace': {
+        const pos = getWorldPos(landmarks, 152);
+        if (!pos) break;
+        // Drop to neck and pull forward slightly
+        pos.y -= 0.18;
+        pos.z += 0.05;
+
+        // NaN / finite guards
+        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) break;
+        if (isNaN(pos.x) || isNaN(pos.y) || isNaN(pos.z)) break;
+
+        if (mainGroup.current && mainGroup.current.parent) {
+          mainGroup.current.visible = true;
+          mainGroup.current.position.copy(filterPos.update(pos));
+          mainGroup.current.rotation.set(0, 0, 0);
+          try { mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
+        }
+        if (leftEarGroup.current && leftEarGroup.current.parent) leftEarGroup.current.visible = true;
+        if (rightEarGroup.current && rightEarGroup.current.parent) rightEarGroup.current.visible = true;
+        break;
+      }
+
+      case 'earring': {
+        const leftPos = getWorldPos(landmarks, 234);
+        const rightPos = getWorldPos(landmarks, 454);
+        if (!leftPos || !rightPos) break;
+        if (!Number.isFinite(leftPos.x) || !Number.isFinite(leftPos.y) || !Number.isFinite(leftPos.z)) break;
+        if (!Number.isFinite(rightPos.x) || !Number.isFinite(rightPos.y) || !Number.isFinite(rightPos.z)) break;
+
+        leftPos.y -= 0.015;
+        rightPos.y -= 0.015;
+        if (isNaN(leftPos.x) || isNaN(leftPos.y) || isNaN(leftPos.z)) break;
+        if (isNaN(rightPos.x) || isNaN(rightPos.y) || isNaN(rightPos.z)) break;
+
+        if (leftEarGroup.current && leftEarGroup.current.parent) {
+          leftEarGroup.current.visible = true;
+          leftEarGroup.current.position.copy(filterPos.update(leftPos));
+          leftEarGroup.current.rotation.set(0, 0, 0);
+          try { leftEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
+        }
+        if (rightEarGroup.current && rightEarGroup.current.parent) {
+          rightEarGroup.current.visible = true;
+          rightEarGroup.current.position.copy(filterPos.update(rightPos));
+          rightEarGroup.current.rotation.set(0, 0, 0);
+          try { rightEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
+        }
+        if (mainGroup.current && mainGroup.current.parent) mainGroup.current.visible = true;
+        break;
+      }
+
+      case 'nosepin': {
+        const pos = getWorldPos(landmarks, 1);
+        if (!pos) break;
+        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) break;
+
+        pos.z += 0.01;
+        pos.y -= 0.005;
+        if (isNaN(pos.x) || isNaN(pos.y) || isNaN(pos.z)) break;
+
+        if (mainGroup.current && mainGroup.current.parent) {
+          mainGroup.current.visible = true;
+          mainGroup.current.position.copy(filterPos.update(pos));
+          mainGroup.current.rotation.set(0, 0, 0);
+          try { mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
+        }
+        if (leftEarGroup.current && leftEarGroup.current.parent) leftEarGroup.current.visible = true;
+        if (rightEarGroup.current && rightEarGroup.current.parent) rightEarGroup.current.visible = true;
+        break;
+      }
+
+      default:
+        break;
+    }
+  });
+
+  useEffect(() => {
+    if (!debugMode || !isValidModel) return;
+    const helpers = [];
+    try {
+      if (mainGroup.current) {
+        const h = new THREE.BoxHelper(mainGroup.current, 0xff0000);
+        mainGroup.current.add(h);
+        helpers.push({ parent: mainGroup.current, helper: h });
+      }
+      if (leftEarGroup.current) {
+        const h = new THREE.BoxHelper(leftEarGroup.current, 0xff0000);
+        leftEarGroup.current.add(h);
+        helpers.push({ parent: leftEarGroup.current, helper: h });
+      }
+      if (rightEarGroup.current) {
+        const h = new THREE.BoxHelper(rightEarGroup.current, 0xff0000);
+        rightEarGroup.current.add(h);
+        helpers.push({ parent: rightEarGroup.current, helper: h });
+      }
+    } catch (e) { }
+
+    return () => {
+      try {
+        helpers.forEach(({ parent, helper }) => {
+          if (parent && helper) parent.remove(helper);
+        });
+      } catch (e) { }
+    };
+  }, [debugMode, isValidModel]);
+
+  /* =========================
+     JSX
+  ========================= */
+  return (
+    <group>
+      {/* Environment map for realistic reflections */}
+      <Environment preset="city" />
+      <primitive ref={mainGroup} object={sceneMain} visible={true} />
+      <primitive ref={leftEarGroup} object={sceneLeft} visible={true} />
+      <primitive ref={rightEarGroup} object={sceneRight} visible={true} />
+    </group>
+  );
 }

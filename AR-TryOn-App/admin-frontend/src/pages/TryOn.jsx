@@ -9,6 +9,13 @@ import Navbar from "../components/Navbar"; // Ensure Navbar is present if not in
 import CapturePreviewModal from "../components/CapturePreviewModal";
 import ErrorBoundary from "../components/ErrorBoundary";
 
+// DISABLE HMR FOR THIS MODULE
+if (import.meta.hot) {
+  import.meta.hot.accept(() => {
+    window.location.reload();
+  });
+}
+
 export default function TryOn() {
   const location = useLocation();
   const { productId } = useParams();
@@ -206,6 +213,13 @@ export default function TryOn() {
     setZRot(0);
   };
 
+  // Debug mode state
+  const [debugMode, setDebugMode] = useState(false);
+
+  // Safe Setters with Clamping
+  const safeSetScale = (val) => setScale(Math.min(Math.max(val, 0.05), 0.5)); // Clamp 0.05 to 0.5
+  const safeSetZPos = (val) => setZPos(Math.min(Math.max(val, -2), 1)); // Clamp Z so it doesn't disappear too far
+
   const handleTakePhoto = async () => {
     try {
       const video = document.getElementById('ar-video');
@@ -299,6 +313,18 @@ export default function TryOn() {
               </button>
             );
           })}
+
+          <div className="mt-auto flex flex-col gap-2">
+            <label className="flex items-center gap-2 text-xs text-[var(--gold-dim)] cursor-pointer">
+              <input
+                type="checkbox"
+                checked={debugMode}
+                onChange={(e) => setDebugMode(e.target.checked)}
+                className="accent-[var(--gold)]"
+              />
+              Debug Mode
+            </label>
+          </div>
         </div>
 
         {/* CENTER PANEL: AR View Container */}
@@ -319,6 +345,7 @@ export default function TryOn() {
                 yRot={yRot}
                 zRot={zRot}
                 material={material}
+                debugMode={debugMode}
               />
             </ErrorBoundary>
 
@@ -379,10 +406,10 @@ export default function TryOn() {
           <ControlPanel
             onTakePhoto={handleTakePhoto}
             onReset={handleReset}
-            scale={scale} setScale={setScale}
+            scale={scale} setScale={safeSetScale}
             xPos={xPos} setXPos={setXPos}
             yPos={yPos} setYPos={setYPos}
-            zPos={zPos} setZPos={setZPos}
+            zPos={zPos} setZPos={safeSetZPos}
             yRot={yRot} setYRot={setYRot}
             zRot={zRot} setZRot={setZRot}
             material={material}
@@ -403,3 +430,4 @@ export default function TryOn() {
     </div>
   );
 }
+

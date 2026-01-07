@@ -7,8 +7,18 @@ import { Camera } from '@mediapipe/camera_utils';
 import JewelryAnchor from './JewelryAnchor';
 import FaceOccluder from './FaceOccluder';
 
+// DISABLE HMR FOR THIS MODULE TO PREVENT WEBGL CRASHES
+if (import.meta.hot) {
+    import.meta.hot.accept(() => {
+        window.location.reload();
+    });
+}
+
 /**
  * ARCanvas Component - Premium V2
+ * 
+ * NOTE: HMR is disabled for this file intentionally. 
+ * Any changes here will trigger a full page reload.
  */
 class ARComponentErrorBoundary extends React.Component {
     constructor(props) {
@@ -47,7 +57,8 @@ function ARComponents({
     zPos,
     yRot,
     zRot,
-    material
+    material,
+    debugMode
 }) {
     return (
         <ARComponentErrorBoundary key={modelUrl}>
@@ -63,6 +74,7 @@ function ARComponents({
                 manualYRot={yRot}
                 manualZRot={zRot}
                 material={material}
+                debugMode={debugMode}
             />
         </ARComponentErrorBoundary>
     );
@@ -77,7 +89,8 @@ export default function ARCanvas({
     zPos = 0,
     yRot = 0,
     zRot = 0,
-    material = 'Silver'
+    material = 'Silver',
+    debugMode = false
 }) {
     const videoRef = useRef(null);
     const canvasRef = useRef(null);
@@ -183,14 +196,13 @@ export default function ARCanvas({
                     style={{ width: '100%', height: '100%' }}
                     gl={{
                         alpha: true,
-                        antialias: false, // Pure performance: toggle off for mid-range
+                        antialias: false,
                         powerPreference: 'high-performance',
-                        toneMapping: THREE.ACESFilmicToneMapping,
+                        toneMapping: THREE.NoToneMapping, // DISABLED TONE MAPPING AS REQUESTED
                         outputColorSpace: THREE.SRGBColorSpace,
                     }}
-                    camera={{ position: [0, 0, 1], fov: 45, near: 0.01, far: 10 }}
+                    camera={{ position: [0, 0, 1], fov: 45, near: 0.01, far: 100 }} // INCREASED FAR PLANE
                     onCreated={({ gl }) => {
-                        // Store gl for cleanup
                         glRef.current = gl;
                         const canvasEl = gl.domElement;
                         const onContextLost = (e) => {
@@ -202,15 +214,15 @@ export default function ARCanvas({
                         };
                         canvasEl.addEventListener('webglcontextlost', onContextLost);
                         canvasEl.addEventListener('webglcontextrestored', onContextRestored);
-                        // No cleanup returned here; we remove listeners in outer useEffect cleanup
                     }}
                 >
-                    <ambientLight intensity={0.5} />
+                    <ambientLight intensity={1.5} />
+                    <directionalLight position={[0, 10, 5]} intensity={2.0} castShadow />
                     <Environment preset="studio" />
 
-                    {/* DEBUG TOOLS: Forced Visual Reference */}
-                    <axesHelper args={[5]} />
-                    <gridHelper args={[10, 10]} />
+                    {/* DEBUG TOOLS */}
+                    {debugMode && <axesHelper args={[0.5]} />}
+                    {debugMode && <gridHelper args={[10, 10]} />}
 
                     <Suspense fallback={
                         <Html center>
@@ -232,29 +244,38 @@ export default function ARCanvas({
                                 yRot={yRot}
                                 zRot={zRot}
                                 material={material}
+                                debugMode={debugMode}
                             />
                         )}
                     </Suspense>
-                    <ContactShadows opacity={0.3} scale={5} blur={2} far={1} />
+                    <ContactShadows opacity={0.3} scale={3} blur={2} far={1} />
                 </Canvas>
             </div>
+
 
             {error && (
                 <div className="absolute top-4 left-4 bg-red-900/80 text-white px-4 py-2 rounded-full text-xs uppercase">
                     {error}
                 </div>
-            )}
+            )
+            }
 
-            {!isReady && !error && (
-                <div className="absolute top-4 left-4 bg-black/60 text-gold-500 px-4 py-2 rounded-full text-xs animate-pulse">
-                    Initializing AR...
-                </div>
-            )}
+            {
+                !isReady && !error && (
+                    <div className="absolute top-4 left-4 bg-black/60 text-gold-500 px-4 py-2 rounded-full text-xs animate-pulse">
+                        Initializing AR...
+                    </div>
+                )
+            }
 
-        </div>
+        </div >
     );
 }
 
+// Cleanup WebGL renderer when component unmounts to avoid leaks
+// Note: react-three/fiber manages renderer life, but in single-page apps explicit cleanup helps on HMR and long sessions
+// We'll use a side-effect to dispose if glRef is set.
+// This effect runs once per ARCanvas mount.
 // Cleanup WebGL renderer when component unmounts to avoid leaks
 // Note: react-three/fiber manages renderer life, but in single-page apps explicit cleanup helps on HMR and long sessions
 // We'll use a side-effect to dispose if glRef is set.
@@ -263,15 +284,11 @@ export function useARCleanup(glRef) {
     useEffect(() => {
         return () => {
             try {
+                // Simplified cleanup: Just let generic dispose happen.
+                // Removing forceContextLoss to prevent HMR crash loops.
                 const gl = glRef.current;
-                if (gl) {
-                    // try to properly dispose renderer and free context
-                    if (typeof gl.forceContextLoss === 'function') {
-                        gl.forceContextLoss();
-                    }
-                    if (typeof gl.dispose === 'function') {
-                        gl.dispose();
-                    }
+                if (gl && typeof gl.dispose === 'function') {
+                    // gl.dispose(); // Even explicit dispose can be risky with R3F in dev. Let's trust R3F.
                 }
             } catch (err) {
                 console.warn('Error during AR cleanup', err);
