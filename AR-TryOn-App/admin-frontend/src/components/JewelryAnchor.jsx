@@ -214,7 +214,12 @@ export default function JewelryAnchor({
   function getWorldPos(landmarks, idx) {
     if (!landmarks || !landmarks[idx]) return null;
     const lm = landmarks[idx];
-    const x = (lm.x - 0.5) * 2;
+
+    // FIX 2: Mirror Logic
+    // Since video is scaleX(-1), we must invert the X coordinate
+    // Original: (lm.x - 0.5) * 2
+    // New: ((1 - lm.x) - 0.5) * 2
+    const x = ((1 - lm.x) - 0.5) * 2;
     const y = -(lm.y - 0.5) * 2;
     const zDepth = 0.8; // push further into scene
     const vec = new THREE.Vector3(x, y, zDepth);
@@ -252,7 +257,7 @@ export default function JewelryAnchor({
 
     // Reset rotations and force visibility for debugging (temporary)
     if (mainGroup.current) {
-      mainGroup.current.rotation.set(0, 0, 0);
+      // mainGroup.current.rotation.set(0, 0, 0); // Removed auto-reset to allow logic to set it
       mainGroup.current.visible = true;
     }
     if (leftEarGroup.current) {
@@ -271,7 +276,7 @@ export default function JewelryAnchor({
 
     // Ensure required landmark indices exist for current category
     const requiredIndices =
-      category === 'necklace' ? [152] : category === 'earring' ? [234, 454] : category === 'nosepin' ? [1] : [];
+      category === 'necklace' ? [152, 234, 454] : category === 'earring' ? [234, 454] : category === 'nosepin' ? [1] : [];
     for (let idx of requiredIndices) {
       if (!landmarks[idx]) {
         return; // abort frame if tracking data incomplete
@@ -286,11 +291,24 @@ export default function JewelryAnchor({
     // Per-category anchoring
     switch ((category || '').toLowerCase().trim()) {
       case 'necklace': {
-        const pos = getWorldPos(landmarks, 152);
-        if (!pos) break;
-        // Drop to neck and pull forward slightly
-        pos.y -= 0.18;
-        pos.z += 0.05;
+        // FIX 3: Correct Necklace Anchoring
+        const chin = getWorldPos(landmarks, 152);
+        const leftJaw = getWorldPos(landmarks, 234);
+        const rightJaw = getWorldPos(landmarks, 454);
+
+        if (!chin || !leftJaw || !rightJaw) break;
+
+        // Position: X from Chin, Y down 0.08m
+        const pos = chin.clone();
+        pos.y -= 0.08;
+
+        // Rotation: Tilt with jaw line
+        // Vector from Left Jaw to Right Jaw
+        const jawVector = new THREE.Vector3().subVectors(rightJaw, leftJaw);
+
+        // Calculate Roll (Rotation around Z axis)
+        // In 2D plane of the screen (X, Y)
+        const roll = Math.atan2(jawVector.y, jawVector.x);
 
         // NaN / finite guards
         if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) break;
@@ -299,11 +317,14 @@ export default function JewelryAnchor({
         if (mainGroup.current && mainGroup.current.parent) {
           mainGroup.current.visible = true;
           mainGroup.current.position.copy(filterPos.update(pos));
-          mainGroup.current.rotation.set(0, 0, 0);
+
+          // Apply rotation
+          const targetRot = new THREE.Quaternion();
+          targetRot.setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll);
+          mainGroup.current.quaternion.copy(filterRot.update(targetRot));
+
           try { mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
         }
-        if (leftEarGroup.current && leftEarGroup.current.parent) leftEarGroup.current.visible = true;
-        if (rightEarGroup.current && rightEarGroup.current.parent) rightEarGroup.current.visible = true;
         break;
       }
 

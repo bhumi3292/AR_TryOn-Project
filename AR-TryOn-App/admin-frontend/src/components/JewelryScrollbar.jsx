@@ -40,11 +40,18 @@ export default function JewelryScrollbar({ items = [], selected, onSelect }) {
     if (el) el.style.cursor = 'grab';
   };
 
+  const onWheel = (e) => {
+    const el = scrollerRef.current;
+    if (el) {
+      el.scrollLeft += e.deltaY; // Map vertical wheel to horizontal scroll
+    }
+  };
+
   return (
-    <div className="w-full max-w-full">
+    <div className="w-full h-full flex items-center">
       <div
         ref={scrollerRef}
-        className="flex gap-4 overflow-x-auto no-scrollbar pb-4 pt-2 px-2 items-center"
+        className="flex gap-6 overflow-x-auto pb-4 pt-4 px-8 items-center w-full scrollbar-thin scrollbar-thumb-[var(--gold)] scrollbar-track-transparent"
         onMouseDown={onPointerDown}
         onMouseMove={onPointerMove}
         onMouseUp={onPointerUp}
@@ -52,7 +59,8 @@ export default function JewelryScrollbar({ items = [], selected, onSelect }) {
         onTouchStart={onPointerDown}
         onTouchMove={onPointerMove}
         onTouchEnd={onPointerUp}
-        style={{ cursor: 'grab' }}
+        onWheel={onWheel}
+        style={{ cursor: isDragging.current ? 'grabbing' : 'grab' }}
       >
         {items.map((item) => {
           const id = item._id || item.id || item.productId || item.id;

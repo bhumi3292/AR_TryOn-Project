@@ -177,12 +177,17 @@ export default function ARCanvas({
     }, []);
 
     return (
-        <div className="relative w-full h-full">
+        <div className="relative w-full aspect-video mx-auto overflow-hidden rounded-xl shadow-2xl bg-black">
             <video
                 ref={videoRef}
                 id="ar-video"
                 className="absolute inset-0 w-full h-full object-cover"
-                style={{ transform: 'scaleX(-1)' }}
+                style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'cover', // This stops the "stretched face"
+                    transform: 'scaleX(-1)' // This mirrors it so it feels natural
+                }}
                 playsInline
                 autoPlay
                 muted
@@ -196,9 +201,9 @@ export default function ARCanvas({
                     style={{ width: '100%', height: '100%' }}
                     gl={{
                         alpha: true,
-                        antialias: false,
+                        antialias: true, // Enable AA for better quality
                         powerPreference: 'high-performance',
-                        toneMapping: THREE.NoToneMapping, // DISABLED TONE MAPPING AS REQUESTED
+                        toneMapping: THREE.ACESFilmicToneMapping, // Restore decent tone mapping
                         outputColorSpace: THREE.SRGBColorSpace,
                     }}
                     camera={{ position: [0, 0, 1], fov: 45, near: 0.01, far: 100 }} // INCREASED FAR PLANE
