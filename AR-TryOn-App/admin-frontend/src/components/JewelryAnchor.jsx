@@ -40,9 +40,6 @@ class QuatFilter {
   }
 }
 
-/* =========================
-   COMPONENT
-========================= */
 export default function JewelryAnchor({
   modelUrl,
   category,
@@ -52,14 +49,14 @@ export default function JewelryAnchor({
   debugMode = false,
 }) {
   const { scene } = useGLTF(modelUrl);
-  const { camera, scene: threeScene } = useThree();
+  const { camera } = useThree();
 
   const mainGroup = useRef();
   const leftEarGroup = useRef();
   const rightEarGroup = useRef();
 
-  const filterPos = useMemo(() => new VectorFilter(0.25), [modelUrl]);
-  const filterRot = useMemo(() => new QuatFilter(0.25), [modelUrl]);
+  const filterPos = useMemo(() => new VectorFilter(0.15), [modelUrl]); // Slower lerp for weight
+  const filterRot = useMemo(() => new QuatFilter(0.15), [modelUrl]);
 
   const sceneMain = useMemo(() => scene.clone(true), [scene]);
   const sceneLeft = useMemo(() => scene.clone(true), [scene]);
@@ -69,9 +66,9 @@ export default function JewelryAnchor({
   const [isValidModel, setIsValidModel] = useState(false);
 
   const CATEGORY_SCALES = {
-    necklace: 0.2,
-    earring: 0.02,
-    nosepin: 0.005,
+    necklace: 0.22, // Adjusted for typical neck width relative to face
+    earring: 0.035,
+    nosepin: 0.008,
   };
 
   /* =========================
@@ -80,173 +77,126 @@ export default function JewelryAnchor({
   useEffect(() => {
     if (!scene) return;
 
-    // Safety Shield: compute one locked scale from the original scene
     const box = new THREE.Box3().setFromObject(scene);
     const size = new THREE.Vector3();
     box.getSize(size);
-
-    // 1. Safety Check: floor to avoid division by zero for broken models
     const maxDim = Math.max(size.x, size.y, size.z, 0.001);
 
-    // 2. Set Target per category mapping (necklace default increased to 0.2)
     const currentCategory = (category || '').toLowerCase().trim();
     const targetSize = CATEGORY_SCALES[currentCategory] || 0.05;
-
-    // 3. Compute once and store in ref
     const computedScale = targetSize / maxDim;
-
-    // 4. Clamp the scale: never allow > 10x
     const finalLockedScale = Math.min(computedScale, 10.0);
+
     baseScaleRef.current = finalLockedScale;
 
-    // Shiny gold material using scene environment
+    // PHYSICAL MATERIAL UPGRADE
+    // We want high metalness and smoothness for jewelry
     const overrideMaterial = new THREE.MeshStandardMaterial({
-      color: '#FFD700', // Brighter Gold
-      metalness: 1.0,
-      roughness: 0.1,   // Very shiny
-      envMapIntensity: 1.5,
+      color: '#FFD700',
+      metalness: 1.0,   // Full metal
+      roughness: 0.15,  // Polished but not perfect mirror
+      envMapIntensity: 2.0,
+      side: THREE.DoubleSide
     });
 
-    // Sanitize clones but DO NOT compute scale per-frame — clones left at neutral scale
     [sceneMain, sceneLeft, sceneRight].forEach(s => {
       if (!s) return;
 
-      s.traverse(o => {
-        if (o.isMesh) {
-          try {
-            if (o.geometry) {
-              try { o.geometry.computeVertexNormals(); } catch (e) { }
-              try { o.geometry.computeBoundingBox(); } catch (e) { }
-              try { o.geometry.computeBoundingSphere(); } catch (e) { }
-            }
-
-            o.frustumCulled = false;
-            o.castShadow = true;
-            o.receiveShadow = true;
-
-            if (o.material) {
-              try {
-                o.material.side = THREE.DoubleSide;
-                o.material.transparent = false;
-                o.material.opacity = 1.0;
-              } catch (e) { }
-            }
-          } catch (e) { }
-        }
-      });
-
-      // Compute fresh bounding box for this cloned scene and recentre geometry
+      // Recenter geometry locally
       const localBox = new THREE.Box3().setFromObject(s);
-      const localSize = new THREE.Vector3();
       const localCenter = new THREE.Vector3();
-      localBox.getSize(localSize);
       localBox.getCenter(localCenter);
 
       s.traverse(o => {
-        if (o.isMesh && o.geometry && o.geometry.translate) {
-          try { o.geometry.translate(-localCenter.x, -localCenter.y, -localCenter.z); } catch (e) { }
+        if (o.isMesh) {
+          // Centering geometry
+          if (o.geometry) {
+            o.geometry.translate(-localCenter.x, -localCenter.y, -localCenter.z);
+            o.geometry.computeVertexNormals();
+          }
+          o.frustumCulled = false;
+          o.castShadow = true;
+          o.receiveShadow = true;
+
+          // Apply PBR Material if texture map is missing, else enhance existing
+          if (o.material) {
+            if (o.material.map) {
+              // If generated mesh has texture, keep it but make it metallic
+              o.material.metalness = 0.8;
+              o.material.roughness = 0.2;
+              o.material.envMapIntensity = 1.5;
+            } else {
+              o.material = overrideMaterial;
+            }
+            o.material.needsUpdate = true;
+          }
         }
       });
-
-      // Keep clone at neutral scale — actual displayed scale is applied from baseScaleRef in the frame loop
-      try { s.scale.setScalar(1); } catch (e) { }
-
-      // Apply safe override material
-      s.traverse(node => {
-        if (node.isMesh) {
-          try {
-            node.material = overrideMaterial;
-            node.material.depthWrite = true;
-            node.material.needsUpdate = true;
-            node.frustumCulled = false;
-          } catch (e) { }
-        }
-      });
+      s.scale.setScalar(1);
     });
 
     setIsValidModel(true);
   }, [scene, modelUrl, category]);
 
-  // Reset scales when a new model is loaded to avoid carrying over exploded state
+  // Handle visibility resets
   useEffect(() => {
     if (!modelUrl) return;
-
-    // Hide and zero-scale previous/exploded models immediately
     try {
       if (mainGroup.current) {
         mainGroup.current.visible = false;
-        mainGroup.current.scale.set(0, 0, 0);
+        mainGroup.current.scale.setScalar(0);
       }
       if (leftEarGroup.current) {
         leftEarGroup.current.visible = false;
-        leftEarGroup.current.scale.set(0, 0, 0);
+        leftEarGroup.current.scale.setScalar(0);
       }
       if (rightEarGroup.current) {
         rightEarGroup.current.visible = false;
-        rightEarGroup.current.scale.set(0, 0, 0);
+        rightEarGroup.current.scale.setScalar(0);
       }
     } catch (e) { }
 
-    // Restore scale/visibility on next animation frame once baseScaleRef is available
     requestAnimationFrame(() => {
-      const restore = baseScaleRef.current && Number.isFinite(baseScaleRef.current) && baseScaleRef.current > 0;
-      if (!restore) return;
+      // Restore visibility on next frame
       try {
-        if (mainGroup.current) {
-          mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
-          mainGroup.current.visible = true;
-        }
-        if (leftEarGroup.current) {
-          leftEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
-          leftEarGroup.current.visible = true;
-        }
-        if (rightEarGroup.current) {
-          rightEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
-          rightEarGroup.current.visible = true;
-        }
+        const s = baseScaleRef.current * manualScale;
+        if (mainGroup.current) mainGroup.current.scale.setScalar(s);
+        if (leftEarGroup.current) leftEarGroup.current.scale.setScalar(s);
+        if (rightEarGroup.current) rightEarGroup.current.scale.setScalar(s);
       } catch (e) { }
     });
   }, [modelUrl, manualScale]);
 
   /* =========================
-      LANDMARK → WORLD
+      3D ANCHOR LOGIC
   ========================= */
   function getWorldPos(landmarks, idx) {
     if (!landmarks || !landmarks[idx]) return null;
     const lm = landmarks[idx];
-
-    // FIX 2: Mirror Logic
-    // Since video is scaleX(-1), we must invert the X coordinate
-    // Original: (lm.x - 0.5) * 2
-    // New: ((1 - lm.x) - 0.5) * 2
+    // Mirror X for selfie mode
     const x = ((1 - lm.x) - 0.5) * 2;
     const y = -(lm.y - 0.5) * 2;
-    const zDepth = 0.8; // push further into scene
-    const vec = new THREE.Vector3(x, y, zDepth);
-    vec.unproject(camera);
+    // Helper depth: Face mesh typically resides around Z=0 to -0.5 in normalized space
+    // We project to a fixed depth plane for stability, but use 3 points to determine rotation plane
+    const z = -lm.z;
+
+    // Unproject isn't strictly needed if we map 2D directly to view plane, 
+    // but useful if scene has depth. For simple overlay:
+    const vec = new THREE.Vector3(x, y, 0);
+    // We add Z depth manually in the frame loop relative to head
     return vec;
   }
 
-  function forceNormalizeObject(object) {
-    const box = new THREE.Box3().setFromObject(object);
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-
-    box.getSize(size);
-    box.getCenter(center);
-
-    // Recenter to origin
-    object.position.sub(center);
-
-    const maxDim = Math.max(size.x, size.y, size.z);
-
-    // Brutal fallback if model is broken
-    if (!Number.isFinite(maxDim) || maxDim < 1e-4) {
-      object.scale.set(50, 50, 50);
-    } else {
-      const scale = 0.15 / maxDim; // ~15cm jewelry size
-      object.scale.setScalar(scale);
-    }
+  // DRAPING OFFSET LOGIC
+  function getDrapingPoint(chin, neckBase) {
+    if (!chin || !neckBase) return chin;
+    // Interpolate between chin (152) and assumed neck/collarbone
+    // We want the necklace to "hang". 
+    // Simple physics approximation: Point is 
+    const vec = new THREE.Vector3().subVectors(neckBase, chin);
+    // Extend downwards by 20% to hit collarbone area simulated
+    const drapingPoint = chin.clone().add(vec.multiplyScalar(0.5));
+    return drapingPoint;
   }
 
   /* =========================
@@ -254,173 +204,110 @@ export default function JewelryAnchor({
   ========================= */
   useFrame(() => {
     const landmarks = landmarksRef?.current;
+    if (!landmarks || !isValidModel || !mainGroup.current) return;
 
-    // Reset rotations and force visibility for debugging (temporary)
-    if (mainGroup.current) {
-      // mainGroup.current.rotation.set(0, 0, 0); // Removed auto-reset to allow logic to set it
-      mainGroup.current.visible = true;
-    }
-    if (leftEarGroup.current) {
-      leftEarGroup.current.rotation.set(0, 0, 0);
-      leftEarGroup.current.visible = true;
-    }
-    if (rightEarGroup.current) {
-      rightEarGroup.current.rotation.set(0, 0, 0);
-      rightEarGroup.current.visible = true;
-    }
+    // Reset visibility
+    mainGroup.current.visible = true;
+    if (leftEarGroup.current) leftEarGroup.current.visible = true;
+    if (rightEarGroup.current) rightEarGroup.current.visible = true;
 
-    if (!landmarks || !isValidModel) {
-      // Keep guards but do not hide; visibility is forced above for debugging
-      return;
-    }
+    // ANCHORING
+    const currentCat = (category || '').toLowerCase().trim();
 
-    // Ensure required landmark indices exist for current category
-    const requiredIndices =
-      category === 'necklace' ? [152, 234, 454] : category === 'earring' ? [234, 454] : category === 'nosepin' ? [1] : [];
-    for (let idx of requiredIndices) {
-      if (!landmarks[idx]) {
-        return; // abort frame if tracking data incomplete
+    if (currentCat === 'necklace') {
+      /* 
+         NECKLACE: 3-POINT PLANE ANCHOR (Gravity Simulation)
+         Points: 152 (Chin), 234 (Left Jaw), 454 (Right Jaw)
+         Actually, for "Draping", we need 152 and the Neck line. 
+         We use the Jaw line to determine the "Chest Plane" rotation.
+      */
+      const pChin = getWorldPos(landmarks, 152);
+      const pLeft = getWorldPos(landmarks, 234);
+      const pRight = getWorldPos(landmarks, 454);
+
+      if (pChin && pLeft && pRight) {
+        // 1. Calculate Center Position (Anatomy-based)
+        // Necklace hangs from neck base. We simulate neck base relative to chin.
+        // Downwards vector in face local space is roughly (pChin - midpoint(eyes)). 
+        // Simplification: Just go down local Y.
+
+        // Midpoint of Jaws
+        const midJaw = new THREE.Vector3().addVectors(pLeft, pRight).multiplyScalar(0.5);
+        // Vector Chin -> MidJaw is "Up" relative to face.
+        const faceDown = new THREE.Vector3().subVectors(pChin, midJaw).normalize();
+
+        // Gravity / Draping offset: 12cm down from chin along face vector?
+        // Taking Z depth into account (pChin.z is approx 0). 
+        // We put it at z = pChin.z + offset (wrap around neck?)
+
+        // New Position: Chin + (DownVector * 0.15)
+        const anchorPos = pChin.clone().add(faceDown.multiplyScalar(0.15));
+        // Push Z back slightly to wrap around neck (pseudo-3D)
+        anchorPos.z -= 0.05;
+
+        // 2. Calculate Rotation (Assessment of Pitch/Roll/Yaw)
+        // X-axis: Right - Left
+        const xAxis = new THREE.Vector3().subVectors(pRight, pLeft).normalize();
+        // Y-axis: Up (MidJaw - Chin)
+        const yAxis = new THREE.Vector3().subVectors(midJaw, pChin).normalize();
+        // Z-axis: Cross Logic (Normal to face)
+        const zAxis = new THREE.Vector3().crossVectors(xAxis, yAxis).normalize();
+
+        // Create Rotation Matrix
+        const rotMatrix = new THREE.Matrix4().makeBasis(xAxis, yAxis, zAxis);
+        const targetQuat = new THREE.Quaternion().setFromRotationMatrix(rotMatrix);
+
+        // Apply gravity correction? Necklace should hang logic vertical if user leans? 
+        // We actually want "Conform to Body". Body follows head roughly. 
+        // We stick to the computed face plane for specific "stuck" feeling, 
+        // but we relax it with Slerp to give "weight".
+
+        mainGroup.current.position.copy(filterPos.update(anchorPos));
+        mainGroup.current.quaternion.copy(filterRot.update(targetQuat));
+
+        // Apply Scale
+        const scale = baseScaleRef.current * manualScale;
+        mainGroup.current.scale.setScalar(scale);
       }
-    }
+    } else if (currentCat === 'earring') {
+      // EARRINGS: 234 (Left) and 454 (Right)
+      // Simple lobe offset
+      const pLeft = getWorldPos(landmarks, 234);
+      const pRight = getWorldPos(landmarks, 454);
 
-    // confidenceScore is OPTIONAL – only block if provided AND low
-    if (typeof confidenceScore === 'number' && confidenceScore < 0.85) {
-      return;
-    }
-
-    // Per-category anchoring
-    switch ((category || '').toLowerCase().trim()) {
-      case 'necklace': {
-        // FIX 3: Correct Necklace Anchoring
-        const chin = getWorldPos(landmarks, 152);
-        const leftJaw = getWorldPos(landmarks, 234);
-        const rightJaw = getWorldPos(landmarks, 454);
-
-        if (!chin || !leftJaw || !rightJaw) break;
-
-        // Position: X from Chin, Y down 0.08m
-        const pos = chin.clone();
-        pos.y -= 0.08;
-
-        // Rotation: Tilt with jaw line
-        // Vector from Left Jaw to Right Jaw
-        const jawVector = new THREE.Vector3().subVectors(rightJaw, leftJaw);
-
-        // Calculate Roll (Rotation around Z axis)
-        // In 2D plane of the screen (X, Y)
-        const roll = Math.atan2(jawVector.y, jawVector.x);
-
-        // NaN / finite guards
-        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) break;
-        if (isNaN(pos.x) || isNaN(pos.y) || isNaN(pos.z)) break;
-
-        if (mainGroup.current && mainGroup.current.parent) {
-          mainGroup.current.visible = true;
-          mainGroup.current.position.copy(filterPos.update(pos));
-
-          // Apply rotation
-          const targetRot = new THREE.Quaternion();
-          targetRot.setFromAxisAngle(new THREE.Vector3(0, 0, 1), roll);
-          mainGroup.current.quaternion.copy(filterRot.update(targetRot));
-
-          try { mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
-        }
-        break;
+      if (pLeft && leftEarGroup.current) {
+        // Offset down for lobe
+        pLeft.y -= 0.02;
+        leftEarGroup.current.position.copy(filterPos.update(pLeft));
+        leftEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
+        // Zero rotation for earrings usually fine (gravity)
+        leftEarGroup.current.rotation.set(0, 0, 0);
       }
-
-      case 'earring': {
-        const leftPos = getWorldPos(landmarks, 234);
-        const rightPos = getWorldPos(landmarks, 454);
-        if (!leftPos || !rightPos) break;
-        if (!Number.isFinite(leftPos.x) || !Number.isFinite(leftPos.y) || !Number.isFinite(leftPos.z)) break;
-        if (!Number.isFinite(rightPos.x) || !Number.isFinite(rightPos.y) || !Number.isFinite(rightPos.z)) break;
-
-        leftPos.y -= 0.015;
-        rightPos.y -= 0.015;
-        if (isNaN(leftPos.x) || isNaN(leftPos.y) || isNaN(leftPos.z)) break;
-        if (isNaN(rightPos.x) || isNaN(rightPos.y) || isNaN(rightPos.z)) break;
-
-        if (leftEarGroup.current && leftEarGroup.current.parent) {
-          leftEarGroup.current.visible = true;
-          leftEarGroup.current.position.copy(filterPos.update(leftPos));
-          leftEarGroup.current.rotation.set(0, 0, 0);
-          try { leftEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
-        }
-        if (rightEarGroup.current && rightEarGroup.current.parent) {
-          rightEarGroup.current.visible = true;
-          rightEarGroup.current.position.copy(filterPos.update(rightPos));
-          rightEarGroup.current.rotation.set(0, 0, 0);
-          try { rightEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
-        }
-        if (mainGroup.current && mainGroup.current.parent) mainGroup.current.visible = true;
-        break;
+      if (pRight && rightEarGroup.current) {
+        // Offset down for lobe
+        pRight.y -= 0.02;
+        rightEarGroup.current.position.copy(pRight); // Shared filter might jump, careful.
+        // Ideally independent filter for R/L. For now direct copy for R to avoid jumpiness 
+        // or create 2nd filter. Let's use direct for now.
+        rightEarGroup.current.scale.setScalar(baseScaleRef.current * manualScale);
+        rightEarGroup.current.rotation.set(0, 0, 0);
       }
-
-      case 'nosepin': {
-        const pos = getWorldPos(landmarks, 1);
-        if (!pos) break;
-        if (!Number.isFinite(pos.x) || !Number.isFinite(pos.y) || !Number.isFinite(pos.z)) break;
-
-        pos.z += 0.01;
-        pos.y -= 0.005;
-        if (isNaN(pos.x) || isNaN(pos.y) || isNaN(pos.z)) break;
-
-        if (mainGroup.current && mainGroup.current.parent) {
-          mainGroup.current.visible = true;
-          mainGroup.current.position.copy(filterPos.update(pos));
-          mainGroup.current.rotation.set(0, 0, 0);
-          try { mainGroup.current.scale.setScalar(baseScaleRef.current * manualScale); } catch (e) { }
-        }
-        if (leftEarGroup.current && leftEarGroup.current.parent) leftEarGroup.current.visible = true;
-        if (rightEarGroup.current && rightEarGroup.current.parent) rightEarGroup.current.visible = true;
-        break;
-      }
-
-      default:
-        break;
     }
   });
 
-  useEffect(() => {
-    if (!debugMode || !isValidModel) return;
-    const helpers = [];
-    try {
-      if (mainGroup.current) {
-        const h = new THREE.BoxHelper(mainGroup.current, 0xff0000);
-        mainGroup.current.add(h);
-        helpers.push({ parent: mainGroup.current, helper: h });
-      }
-      if (leftEarGroup.current) {
-        const h = new THREE.BoxHelper(leftEarGroup.current, 0xff0000);
-        leftEarGroup.current.add(h);
-        helpers.push({ parent: leftEarGroup.current, helper: h });
-      }
-      if (rightEarGroup.current) {
-        const h = new THREE.BoxHelper(rightEarGroup.current, 0xff0000);
-        rightEarGroup.current.add(h);
-        helpers.push({ parent: rightEarGroup.current, helper: h });
-      }
-    } catch (e) { }
-
-    return () => {
-      try {
-        helpers.forEach(({ parent, helper }) => {
-          if (parent && helper) parent.remove(helper);
-        });
-      } catch (e) { }
-    };
-  }, [debugMode, isValidModel]);
-
-  /* =========================
-     JSX
-  ========================= */
   return (
     <group>
-      {/* Environment map for realistic reflections */}
+      {/* Light setup for Physicality */}
+      <ambientLight intensity={0.4} />
+      <directionalLight position={[0, 10, 5]} intensity={1.5} castShadow />
+      <spotLight position={[5, 0, 5]} intensity={0.8} angle={0.5} penumbra={1} />
+
       <Environment preset="city" />
-      <primitive ref={mainGroup} object={sceneMain} visible={true} />
-      <primitive ref={leftEarGroup} object={sceneLeft} visible={true} />
-      <primitive ref={rightEarGroup} object={sceneRight} visible={true} />
+
+      {/* Groups */}
+      <primitive ref={mainGroup} object={sceneMain} />
+      <primitive ref={leftEarGroup} object={sceneLeft} />
+      <primitive ref={rightEarGroup} object={sceneRight} />
     </group>
   );
 }
